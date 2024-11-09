@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "650216056799",
+    "project_id": "zen-assist-app-ab614",
+    "storage_bucket": "zen-assist-app-ab614.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:650216056799:android:b8b0b7a6073bf16802866a",
+        "android_client_info": {
+          "package_name": "zen.assist.app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDMss2fXbkyJwJ7nndUy9cJYCatEiLMl3E"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

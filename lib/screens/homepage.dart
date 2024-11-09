@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:zen_assist/screens/loginpage.dart';
 
 class Homepage extends StatelessWidget {
   const Homepage({super.key});
@@ -54,12 +55,12 @@ class Homepage extends StatelessWidget {
                 // Get Started Button
                 ElevatedButton(
                   onPressed: () {
-                    print("Navigating to LoginPage");
-                    /*Navigator.push(
+          
+                    Navigator.push(
                       context,
                       MaterialPageRoute(
                           builder: (context) => const LoginPage()),
-                    );*/
+                    );
                   },
                   style: ElevatedButton.styleFrom(
                     backgroundColor: Colors.white,

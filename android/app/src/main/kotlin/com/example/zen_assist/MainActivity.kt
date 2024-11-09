@@ -1,4 +1,4 @@
-package com.example.zen_assist
+package zen.assist.app
 
 import io.flutter.embedding.android.FlutterActivity
 
