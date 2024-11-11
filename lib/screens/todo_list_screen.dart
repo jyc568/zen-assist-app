@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:zen_assist/utils/task_priority_colors.dart';
 import 'package:zen_assist/widgets/task_card.dart';
 import 'package:zen_assist/models/task.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -15,16 +16,65 @@ class ToDoListScreen extends StatefulWidget {
 class _ToDoListScreenState extends State<ToDoListScreen> {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   final FirebaseAuth _auth = FirebaseAuth.instance;
-  late Stream<QuerySnapshot> _tasksStream;
+  late Stream<QuerySnapshot> _personalTasksStream;
+  Stream<QuerySnapshot>? _familyTasksStream;
+  String? familyId;
+  bool isCreator = false;
+  bool _isLoading = true;
+  final String _selectedPriority = 'low';
 
   @override
   void initState() {
     super.initState();
-    _tasksStream = _firestore
+    _loadUserFamilyData();
+  }
+
+  Future<void> _loadUserFamilyData() async {
+    try {
+      final user = _auth.currentUser;
+      if (user != null) {
+        final userData =
+            await _firestore.collection('users').doc(user.uid).get();
+        if (userData.exists) {
+          setState(() {
+            familyId = userData.data()?['familyId'];
+            isCreator = userData.data()?['role'] == 'creator';
+          });
+        }
+        _setupStreams();
+        setState(() {
+          _isLoading = false;
+        });
+      }
+    } catch (e) {
+      print('Error loading user data: $e');
+      setState(() {
+        _isLoading = false;
+      });
+    }
+  }
+
+  void _setupStreams() {
+    final user = _auth.currentUser;
+    if (user == null) return;
+
+    // Personal tasks stream - always set up
+    _personalTasksStream = _firestore
         .collection('todoList')
-        .where('userId', isEqualTo: _auth.currentUser?.uid)
+        .where('userId', isEqualTo: user.uid)
+        .where('taskType', isEqualTo: 'personal')
         .orderBy('dueDate')
         .snapshots();
+
+    // Family tasks stream - only if user has a family
+    if (familyId != null) {
+      _familyTasksStream = _firestore
+          .collection('todoList')
+          .where('familyId', isEqualTo: familyId)
+          .where('taskType', isEqualTo: 'family')
+          .orderBy('dueDate')
+          .snapshots();
+    }
   }
 
   Task _convertDocumentToTask(DocumentSnapshot document) {
@@ -35,18 +85,36 @@ class _ToDoListScreenState extends State<ToDoListScreen> {
       dueDate: (data['dueDate'] as Timestamp).toDate(),
       isCompleted: data['isCompleted'] ?? false,
       userId: data['userId'],
+      familyId: data['familyId'],
+      taskType: data['taskType'],
+      priority: data['priority'] ?? 'low',
     );
   }
 
-  Future<void> _addTask(String title, DateTime dueDate) async {
+  Future<void> _addTask(String title, DateTime dueDate, String taskType, String priority) async {
     try {
-      await _firestore.collection('todoList').add({
-        'title': title,
-        'dueDate': Timestamp.fromDate(dueDate),
-        'isCompleted': false,
-        'userId': _auth.currentUser?.uid,
-        'createdAt': FieldValue.serverTimestamp(),
-      });
+      final user = _auth.currentUser;
+      if (user != null) {
+        // Only allow family tasks if user is creator
+        if (taskType == 'family' && !isCreator) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+                content: Text('Only family creators can create family tasks')),
+          );
+          return;
+        }
+
+        await _firestore.collection('todoList').add({
+          'title': title,
+          'dueDate': Timestamp.fromDate(dueDate),
+          'isCompleted': false,
+          'userId': user.uid,
+          'createdAt': FieldValue.serverTimestamp(),
+          'familyId': taskType == 'family' ? familyId : null,
+          'taskType': taskType,
+          'priority': priority,
+        });
+      }
     } catch (e) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Error adding task: $e')),
@@ -54,31 +122,11 @@ class _ToDoListScreenState extends State<ToDoListScreen> {
     }
   }
 
-  Future<void> _updateTaskStatus(String taskId, bool isCompleted) async {
-    try {
-      await _firestore.collection('todoList').doc(taskId).update({
-        'isCompleted': isCompleted,
-      });
-    } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Error updating task: $e')),
-      );
-    }
-  }
-
-  Future<void> _deleteTask(String taskId) async {
-    try {
-      await _firestore.collection('todoList').doc(taskId).delete();
-    } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Error deleting task: $e')),
-      );
-    }
-  }
-
   void _showAddTaskDialog() {
     String newTaskTitle = '';
     DateTime selectedDate = DateTime.now();
+    String taskType = 'personal';
+    String priority = _selectedPriority;
 
     showDialog(
       context: context,
@@ -95,6 +143,59 @@ class _ToDoListScreenState extends State<ToDoListScreen> {
                 decoration: const InputDecoration(
                   labelText: 'Task Title',
                 ),
+              ),
+              const SizedBox(height: 16),
+              if (isCreator &&
+                  familyId != null) // Only show for family creators
+                DropdownButtonFormField<String>(
+                  value: taskType,
+                  decoration: const InputDecoration(
+                    labelText: 'Task Type',
+                  ),
+                  items: const [
+                    DropdownMenuItem(
+                      value: 'personal',
+                      child: Text('Personal Task'),
+                    ),
+                    DropdownMenuItem(
+                      value: 'family',
+                      child: Text('Family Task'),
+                    ),
+                  ],
+                  onChanged: (value) {
+                    taskType = value!;
+                  },
+                ),
+              const SizedBox(height: 16),
+              DropdownButtonFormField<String>(
+                value: priority,
+                decoration: const InputDecoration(
+                  labelText: 'Priority',
+                ),
+                items: TaskPriorityColors.priorityColors.keys.map((String key) {
+                  return DropdownMenuItem<String>(
+                    value: key,
+                    child: Row(
+                      children: [
+                        Container(
+                          width: 16,
+                          height: 16,
+                          decoration: BoxDecoration(
+                            color: TaskPriorityColors.getColor(key),
+                            shape: BoxShape.circle,
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Text(key.toUpperCase()),
+                      ],
+                    ),
+                  );
+                }).toList(),
+                onChanged: (value) {
+                  setState(() {
+                    priority = value!;
+                  });
+                },
               ),
               const SizedBox(height: 16),
               TextButton(
@@ -121,7 +222,7 @@ class _ToDoListScreenState extends State<ToDoListScreen> {
             TextButton(
               onPressed: () {
                 if (newTaskTitle.isNotEmpty) {
-                  _addTask(newTaskTitle, selectedDate);
+                  _addTask(newTaskTitle, selectedDate, taskType,priority);
                   Navigator.pop(context);
                 }
               },
@@ -133,7 +234,29 @@ class _ToDoListScreenState extends State<ToDoListScreen> {
     );
   }
 
-  Widget _buildTaskList(List<Task> tasks, bool isCompleted) {
+  Future<void> _updateTaskStatus(String taskId, bool isCompleted) async {
+    try {
+      await _firestore.collection('todoList').doc(taskId).update({
+        'isCompleted': isCompleted,
+      });
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Error updating task: $e')),
+      );
+    }
+  }
+
+  Future<void> _deleteTask(String taskId) async {
+    try {
+      await _firestore.collection('todoList').doc(taskId).delete();
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Error deleting task: $e')),
+      );
+    }
+  }
+
+  Widget _buildTaskList(List<Task> tasks, bool isCompleted, String title) {
     final filteredTasks =
         tasks.where((task) => task.isCompleted == isCompleted).toList();
 
@@ -143,7 +266,7 @@ class _ToDoListScreenState extends State<ToDoListScreen> {
         Padding(
           padding: const EdgeInsets.all(16.0),
           child: Text(
-            isCompleted ? 'Completed Tasks' : 'Pending Tasks',
+            title,
             style: TextStyle(
               fontSize: 18,
               fontWeight: FontWeight.bold,
@@ -155,9 +278,7 @@ class _ToDoListScreenState extends State<ToDoListScreen> {
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16.0),
             child: Text(
-              isCompleted
-                  ? 'No completed tasks yet'
-                  : 'No pending tasks - Add some tasks to get started!',
+              isCompleted ? 'No completed tasks' : 'No pending tasks',
               style: TextStyle(
                 color: Colors.grey[600],
                 fontStyle: FontStyle.italic,
@@ -186,6 +307,9 @@ class _ToDoListScreenState extends State<ToDoListScreen> {
                 task: task,
                 onComplete: () =>
                     _updateTaskStatus(task.id!, !task.isCompleted),
+                additionalInfo:
+                    task.taskType == 'family' ? 'Family Task' : 'Personal Task',
+                    priorityColor: TaskPriorityColors.getColor(task.priority),
               ),
             );
           },
@@ -201,33 +325,67 @@ class _ToDoListScreenState extends State<ToDoListScreen> {
       appBar: AppBar(
         title: const Text('To-do List'),
       ),
-      body: StreamBuilder<QuerySnapshot>(
-        stream: _tasksStream,
-        builder: (context, snapshot) {
-          if (snapshot.hasError) {
-            return Center(child: Text('Error: ${snapshot.error}'));
-          }
+      body: _isLoading
+          ? const Center(child: CircularProgressIndicator())
+          : SingleChildScrollView(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // Personal Tasks Section
+                  StreamBuilder<QuerySnapshot>(
+                    stream: _personalTasksStream,
+                    builder: (context, snapshot) {
+                      if (snapshot.hasError) {
+                        return Center(child: Text('Error: ${snapshot.error}'));
+                      }
+                      if (snapshot.connectionState == ConnectionState.waiting) {
+                        return const Center(child: CircularProgressIndicator());
+                      }
+                      final tasks = snapshot.data!.docs
+                          .map((doc) => _convertDocumentToTask(doc))
+                          .toList();
+                      return Column(
+                        children: [
+                          _buildTaskList(
+                              tasks, false, 'Personal Pending Tasks'),
+                          _buildTaskList(
+                              tasks, true, 'Personal Completed Tasks'),
+                          if (familyId != null) const Divider(thickness: 2),
+                        ],
+                      );
+                    },
+                  ),
 
-          if (snapshot.connectionState == ConnectionState.waiting) {
-            return const Center(child: CircularProgressIndicator());
-          }
-
-          final tasks = snapshot.data!.docs
-              .map((doc) => _convertDocumentToTask(doc))
-              .toList();
-
-          return SingleChildScrollView(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                _buildTaskList(tasks, false), // Uncompleted tasks
-                const Divider(thickness: 2),
-                _buildTaskList(tasks, true), // Completed tasks
-              ],
+                  // Family Tasks Section - only show if user has a family
+                  if (familyId != null && _familyTasksStream != null)
+                    StreamBuilder<QuerySnapshot>(
+                      stream: _familyTasksStream,
+                      builder: (context, snapshot) {
+                        if (snapshot.hasError) {
+                          return Center(
+                              child: Text('Error: ${snapshot.error}'));
+                        }
+                        if (snapshot.connectionState ==
+                            ConnectionState.waiting) {
+                          return const Center(
+                              child: CircularProgressIndicator());
+                        }
+                        final tasks = snapshot.data!.docs
+                            .map((doc) => _convertDocumentToTask(doc))
+                            .toList();
+                        return Column(
+                          children: [
+                            _buildTaskList(
+                                tasks, false, 'Family Pending Tasks'),
+                            _buildTaskList(
+                                tasks, true, 'Family Completed Tasks'),
+                          ],
+                        );
+                      },
+                    ),
+                ],
+              ),
             ),
-          );
-        },
-      ),
       bottomNavigationBar: const BottomNavBar(),
       floatingActionButton: FloatingActionButton(
         onPressed: _showAddTaskDialog,

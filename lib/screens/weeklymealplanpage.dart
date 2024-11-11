@@ -13,6 +13,13 @@ class WeeklyMealPlanPage extends StatefulWidget {
   _WeeklyMealPlanPageState createState() => _WeeklyMealPlanPageState();
 }
 
+bool _isCreateMode = false;
+final _formKey = GlobalKey<FormState>();
+final TextEditingController _breakfastController = TextEditingController();
+final TextEditingController _lunchController = TextEditingController();
+final TextEditingController _dinnerController = TextEditingController();
+final TextEditingController _snacksController = TextEditingController();
+
 class _WeeklyMealPlanPageState extends State<WeeklyMealPlanPage> {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   final FirebaseAuth _auth = FirebaseAuth.instance;
@@ -20,7 +27,7 @@ class _WeeklyMealPlanPageState extends State<WeeklyMealPlanPage> {
   DateTime _selectedDate = DateTime.now();
   DateTime _focusedDay = DateTime.now();
   CalendarFormat _calendarFormat = CalendarFormat.week;
-  
+
   @override
   void initState() {
     super.initState();
@@ -29,9 +36,168 @@ class _WeeklyMealPlanPageState extends State<WeeklyMealPlanPage> {
     _scheduleCleanup();
   }
 
+  @override
+  void dispose() {
+    _breakfastController.dispose();
+    _lunchController.dispose();
+    _dinnerController.dispose();
+    _snacksController.dispose();
+    super.dispose();
+  }
+
+  bool _isDateValid(DateTime date) {
+    final now = DateTime.now();
+    return date.isAfter(DateTime(now.year, now.month, now.day - 1));
+  }
+
+  void _showCreateMealPlanDialog() {
+    if (!_isDateValid(_selectedDate)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Cannot create meal plan for past dates'),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
+
+    // Reset controllers
+    _breakfastController.clear();
+    _lunchController.clear();
+    _dinnerController.clear();
+    _snacksController.clear();
+
+    showDialog(
+      context: context,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          title: Text(
+              'Create Meal Plan for ${_selectedDate.toString().split(' ')[0]}'),
+          content: Form(
+            key: _formKey,
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  TextFormField(
+                    controller: _breakfastController,
+                    decoration: const InputDecoration(
+                      labelText: 'Breakfast',
+                      hintText: 'Enter breakfast meal',
+                    ),
+                    validator: (value) => value?.isEmpty ?? true
+                        ? 'Please enter a breakfast meal'
+                        : null,
+                  ),
+                  const SizedBox(height: 16),
+                  TextFormField(
+                    controller: _lunchController,
+                    decoration: const InputDecoration(
+                      labelText: 'Lunch',
+                      hintText: 'Enter lunch meal',
+                    ),
+                    validator: (value) => value?.isEmpty ?? true
+                        ? 'Please enter a lunch meal'
+                        : null,
+                  ),
+                  const SizedBox(height: 16),
+                  TextFormField(
+                    controller: _dinnerController,
+                    decoration: const InputDecoration(
+                      labelText: 'Dinner',
+                      hintText: 'Enter dinner meal',
+                    ),
+                    validator: (value) => value?.isEmpty ?? true
+                        ? 'Please enter a dinner meal'
+                        : null,
+                  ),
+                  const SizedBox(height: 16),
+                  TextFormField(
+                    controller: _snacksController,
+                    decoration: const InputDecoration(
+                      labelText: 'Snacks',
+                      hintText: 'Enter snacks (optional)',
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Cancel'),
+            ),
+            ElevatedButton(
+              onPressed: () async {
+                if (_formKey.currentState!.validate()) {
+                  await _createCustomMealPlan();
+                  if (mounted) Navigator.pop(context);
+                }
+              },
+              child: const Text('Create'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Future<void> _createCustomMealPlan() async {
+    try {
+      final selectedDate = DateTime(
+        _selectedDate.year,
+        _selectedDate.month,
+        _selectedDate.day,
+      );
+
+      // Check if a meal plan already exists for this date
+      final existingPlan = await _firestore
+          .collection('mealPlans')
+          .where('userId', isEqualTo: _auth.currentUser?.uid)
+          .where('date', isEqualTo: selectedDate)
+          .get();
+
+      if (existingPlan.docs.isNotEmpty) {
+        // Update existing meal plan
+        await existingPlan.docs.first.reference.update({
+          'breakfast': _breakfastController.text,
+          'lunch': _lunchController.text,
+          'dinner': _dinnerController.text,
+          'snacks': _snacksController.text,
+          'updatedAt': FieldValue.serverTimestamp(),
+        });
+      } else {
+        // Create new meal plan
+        await _firestore.collection('mealPlans').add({
+          'userId': _auth.currentUser?.uid,
+          'date': selectedDate,
+          'breakfast': _breakfastController.text,
+          'lunch': _lunchController.text,
+          'dinner': _dinnerController.text,
+          'snacks': _snacksController.text,
+          'createdAt': FieldValue.serverTimestamp(),
+          'updatedAt': FieldValue.serverTimestamp(),
+        });
+      }
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Meal plan created successfully!')),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error creating meal plan: $e')),
+        );
+      }
+    }
+  }
+
   void _initializeMealPlanStream() {
-    final startOfWeek = DateTime.now().subtract(
-        Duration(days: DateTime.now().weekday - 1));
+    final startOfWeek =
+        DateTime.now().subtract(Duration(days: DateTime.now().weekday - 1));
     final endOfWeek = startOfWeek.add(const Duration(days: 7));
 
     _mealPlanStream = _firestore
@@ -91,7 +257,7 @@ class _WeeklyMealPlanPageState extends State<WeeklyMealPlanPage> {
         .get();
 
     if (snapshot.docs.isNotEmpty) {
-      return snapshot.docs.first.data() as Map<String, dynamic>;
+      return snapshot.docs.first.data();
     }
     return null;
   }
@@ -151,8 +317,8 @@ class _WeeklyMealPlanPageState extends State<WeeklyMealPlanPage> {
   }
 
   Future<Map<String, dynamic>> _generateWeeklyStats() async {
-    final startOfWeek = _selectedDate.subtract(
-        Duration(days: _selectedDate.weekday - 1));
+    final startOfWeek =
+        _selectedDate.subtract(Duration(days: _selectedDate.weekday - 1));
     final endOfWeek = startOfWeek.add(const Duration(days: 7));
 
     final snapshot = await _firestore
@@ -171,7 +337,7 @@ class _WeeklyMealPlanPageState extends State<WeeklyMealPlanPage> {
     };
 
     for (var doc in snapshot.docs) {
-      final data = doc.data() as Map<String, dynamic>;
+      final data = doc.data();
       for (var type in mealTypeCount.keys) {
         if (data[type] != null && data[type].toString().isNotEmpty) {
           mealTypeCount[type] = (mealTypeCount[type] ?? 0) + 1;
@@ -196,7 +362,7 @@ class _WeeklyMealPlanPageState extends State<WeeklyMealPlanPage> {
         .get();
 
     final meals = snapshot.docs
-        .map((doc) => (doc.data() as Map<String, dynamic>)[mealType.toLowerCase()])
+        .map((doc) => (doc.data())[mealType.toLowerCase()])
         .where((meal) => meal != null && meal.toString().isNotEmpty)
         .toSet()
         .toList();
@@ -263,10 +429,11 @@ class _WeeklyMealPlanPageState extends State<WeeklyMealPlanPage> {
             Text('Total Meals Planned: ${stats['totalMeals']}'),
             Text('Completion Rate: ${stats['completionRate']}%'),
             const SizedBox(height: 8),
-            const Text('Meals by Type:', style: TextStyle(fontWeight: FontWeight.bold)),
+            const Text('Meals by Type:',
+                style: TextStyle(fontWeight: FontWeight.bold)),
             ...(stats['mealTypeCount'] as Map<String, int>).entries.map(
-              (e) => Text('${e.key}: ${e.value}'),
-            ),
+                  (e) => Text('${e.key}: ${e.value}'),
+                ),
           ],
         ),
         actions: [
@@ -287,18 +454,18 @@ class _WeeklyMealPlanPageState extends State<WeeklyMealPlanPage> {
           title: const Text('Meal Suggestions'),
           content: SizedBox(
             width: double.maxFinite,
-            child: FutureBuilder<Map<String, List<String>>>( 
+            child: FutureBuilder<Map<String, List<String>>>(
               future: Future.wait([
                 _generateMealSuggestions('Breakfast'),
                 _generateMealSuggestions('Lunch'),
                 _generateMealSuggestions('Dinner'),
                 _generateMealSuggestions('Snacks'),
               ]).then((results) => {
-                'Breakfast': results[0],
-                'Lunch': results[1],
-                'Dinner': results[2],
-                'Snacks': results[3],
-              }),
+                    'Breakfast': results[0],
+                    'Lunch': results[1],
+                    'Dinner': results[2],
+                    'Snacks': results[3],
+                  }),
               builder: (context, snapshot) {
                 if (snapshot.connectionState == ConnectionState.waiting) {
                   return const Center(child: CircularProgressIndicator());
@@ -325,12 +492,12 @@ class _WeeklyMealPlanPageState extends State<WeeklyMealPlanPage> {
                           ),
                           const SizedBox(height: 8),
                           ...entry.value.map((meal) => ListTile(
-                            title: Text(meal),
-                            onTap: () {
-                              _updateMealPlan(entry.key, meal);
-                              Navigator.pop(context);
-                            },
-                          )),
+                                title: Text(meal),
+                                onTap: () {
+                                  _updateMealPlan(entry.key, meal);
+                                  Navigator.pop(context);
+                                },
+                              )),
                           const SizedBox(height: 16),
                         ],
                       );
@@ -449,7 +616,7 @@ class _WeeklyMealPlanPageState extends State<WeeklyMealPlanPage> {
             color: Colors.grey.withOpacity(0.1),
             spreadRadius: 1,
             blurRadius: 5,
-            offset: Offset(0, 3), // changes position of shadow
+            offset: const Offset(0, 3), // changes position of shadow
           ),
         ],
       ),
@@ -483,7 +650,31 @@ class _WeeklyMealPlanPageState extends State<WeeklyMealPlanPage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Weekly Meal Plan')),
+      appBar: AppBar(
+        title: const Text('Weekly Meal Plan'),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.add),
+            onPressed: _showCreateMealPlanDialog,
+            tooltip: 'Create custom meal plan',
+          ),
+          IconButton(
+            icon: const Icon(Icons.copy),
+            onPressed: () => _showCopyDialog(),
+            tooltip: 'Copy meal plan',
+          ),
+          IconButton(
+            icon: const Icon(Icons.analytics),
+            onPressed: _showWeeklyStats,
+            tooltip: 'Weekly statistics',
+          ),
+          IconButton(
+            icon: const Icon(Icons.lightbulb_outline),
+            onPressed: _showMealSuggestions,
+            tooltip: 'Meal suggestions',
+          ),
+        ],
+      ),
       body: Column(
         children: [
           _buildCalendarView(),
