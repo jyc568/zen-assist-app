@@ -7,9 +7,7 @@ import 'package:zen_assist/models/task.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:zen_assist/widgets/bottom_nav_bar.dart';
-
-//Family Shared Account functions seem to work for now, members can be invited and removed, and they can see their family tasks
-//Family Shared Account creators should be able to create more specific family tasks, where only certain family members can complete them
+import 'package:zen_assist/screens/task_detail_view_screen.dart'; // Updated import for new screen
 
 class ToDoListScreen extends StatefulWidget {
   const ToDoListScreen({super.key});
@@ -27,6 +25,7 @@ class _ToDoListScreenState extends State<ToDoListScreen> {
   bool isCreator = false;
   bool _isLoading = true;
   final String _selectedPriority = 'low';
+  List<Map<String, dynamic>> familyMembers = [];
 
   @override
   void initState() {
@@ -45,6 +44,25 @@ class _ToDoListScreenState extends State<ToDoListScreen> {
             familyId = userData.data()?['familyId'];
             isCreator = userData.data()?['role'] == 'creator';
           });
+
+          // Load family members if user has a family
+          if (familyId != null) {
+            final familySnapshot = await _firestore
+                .collection('users')
+                .where('familyId', isEqualTo: familyId)
+                .where('role', isNotEqualTo: 'creator') // Exclude creators
+                .get();
+
+            setState(() {
+              familyMembers = familySnapshot.docs
+                  .map((doc) => {
+                        'id': doc.id,
+                        'name': doc.data()['name'] ?? 'Unknown',
+                        'email': doc.data()['email'] ?? 'No email'
+                      })
+                  .toList();
+            });
+          }
         }
         _setupStreams();
         setState(() {
@@ -93,6 +111,8 @@ class _ToDoListScreenState extends State<ToDoListScreen> {
       familyId: data['familyId'],
       taskType: data['taskType'],
       priority: data['priority'] ?? 'low',
+      assignedTo: data['assignedTo'],
+      description: data['description'],
     );
   }
 
@@ -107,9 +127,7 @@ class _ToDoListScreenState extends State<ToDoListScreen> {
     try {
       final user = _auth.currentUser;
       if (user != null) {
-        // Check if the task is a family task
         if (taskType == 'family') {
-          // Only allow creators to create family tasks
           if (!isCreator) {
             ScaffoldMessenger.of(context).showSnackBar(
               const SnackBar(
@@ -118,8 +136,6 @@ class _ToDoListScreenState extends State<ToDoListScreen> {
             );
             return;
           }
-
-          // If it's a family task, ensure the familyId is not null
           if (familyId == null) {
             ScaffoldMessenger.of(context).showSnackBar(
               const SnackBar(
@@ -129,37 +145,44 @@ class _ToDoListScreenState extends State<ToDoListScreen> {
             return;
           }
 
-          // If assignedTo is null, create one task for the family with no specific assignment
-          if (assignedTo == null) {
-            await _firestore.collection('todoList').add({
-              'title': title,
-              'dueDate': Timestamp.fromDate(dueDate),
-              'isCompleted': false,
-              'userId': user.uid, // Keep creator as userId
-              'createdAt': FieldValue.serverTimestamp(),
-              'familyId': familyId, // Ensure familyId is set
-              'taskType': 'family',
-              'priority': priority,
-              'assignedTo': null, // No member assigned
-              'description': description ?? '',
-            });
+          if (assignedTo == 'all') {
+            // Create a task for each family member
+            for (var member in familyMembers) {
+              await _firestore.collection('todoList').add({
+                'title': title,
+                'dueDate': Timestamp.fromDate(dueDate),
+                'isCompleted': false,
+                'userId': member['id'], // Use ID for the database
+                'createdAt': FieldValue.serverTimestamp(),
+                'familyId': familyId,
+                'taskType': 'family',
+                'assignedTo': member['email'], // Store email for display
+                'priority': priority,
+                'description': description ?? '',
+              });
+            }
           } else {
-            // If assignedTo is provided, create a task for a specific family member
+            // Find the user ID corresponding to the selected email
+            final memberData = familyMembers.firstWhere(
+              (member) => member['email'] == assignedTo,
+              orElse: () => {'id': '', 'email': assignedTo},
+            );
+
             await _firestore.collection('todoList').add({
               'title': title,
               'dueDate': Timestamp.fromDate(dueDate),
               'isCompleted': false,
-              'userId': assignedTo, // Assign task to the selected member
+              'userId': memberData['id'], // Use ID for the database
               'createdAt': FieldValue.serverTimestamp(),
-              'familyId': familyId, // Ensure familyId is set
+              'familyId': familyId,
               'taskType': 'family',
+              'assignedTo': assignedTo, // Store email for display
               'priority': priority,
-              'assignedTo': assignedTo, // Assign task to the selected member
               'description': description ?? '',
             });
           }
         } else {
-          // If it's a personal task, create as usual for the creator (no familyId)
+          // Personal task
           await _firestore.collection('todoList').add({
             'title': title,
             'dueDate': Timestamp.fromDate(dueDate),
@@ -168,7 +191,7 @@ class _ToDoListScreenState extends State<ToDoListScreen> {
             'createdAt': FieldValue.serverTimestamp(),
             'taskType': 'personal',
             'priority': priority,
-            'assignedTo': null, // Personal tasks don't have assigned members
+            'assignedTo': null,
             'description': description ?? '',
           });
         }
@@ -183,172 +206,155 @@ class _ToDoListScreenState extends State<ToDoListScreen> {
   void _showAddTaskDialog() {
     String newTaskTitle = '';
     DateTime selectedDate = DateTime.now();
-    String taskType = 'personal'; // Default task type
+    String taskType = 'personal';
     String priority = _selectedPriority;
-    String? assignedTo; // Store the selected family member's ID
+    String? assignedTo;
     String? description;
 
-    List<String> taskTypes = ['personal', 'family'];
+    // Only show family option if user has a familyId
+    List<String> taskTypes =
+        familyId != null ? ['personal', 'family'] : ['personal'];
+    List<String> priorities = ['low', 'medium', 'high'];
 
     showDialog(
       context: context,
       builder: (BuildContext context) {
-        return AlertDialog(
-          title: const Text('Add New Task'),
-          content: StatefulBuilder(
-            // StatefulBuilder to dynamically rebuild UI
-            builder: (context, setState) {
-              return Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  TextField(
-                    onChanged: (value) {
-                      newTaskTitle = value;
-                    },
-                    decoration: const InputDecoration(
-                      labelText: 'Task Title',
+        return StatefulBuilder(
+          builder: (context, setState) {
+            bool showAssigneeDropdown = taskType == 'family' && isCreator;
+
+            return AlertDialog(
+              title: const Text('Add New Task'),
+              content: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    TextField(
+                      onChanged: (value) {
+                        newTaskTitle = value;
+                      },
+                      decoration: const InputDecoration(
+                        labelText: 'Task Title',
+                      ),
                     ),
-                  ),
-                  TextField(
-                    onChanged: (value) {
-                      description = value;
-                    },
-                    decoration: const InputDecoration(
-                      labelText: 'Description',
+                    const SizedBox(height: 16),
+                    TextField(
+                      onChanged: (value) {
+                        description = value;
+                      },
+                      decoration: const InputDecoration(
+                        labelText: 'Description',
+                      ),
+                      maxLines: 3,
                     ),
-                  ),
-                  DropdownButtonFormField<String>(
-                    value: taskType,
-                    items: taskTypes.map((String value) {
-                      return DropdownMenuItem<String>(
-                        value: value,
-                        child:
-                            Text(value[0].toUpperCase() + value.substring(1)),
-                      );
-                    }).toList(),
-                    onChanged: (String? newValue) {
-                      setState(() {
-                        taskType = newValue!; // Update the taskType
-                      });
-                    },
-                    decoration: const InputDecoration(labelText: 'Task Type'),
-                  ),
-                  const SizedBox(height: 16),
-
-                  // Show family member dropdown if user is creator and task type is 'family'
-                  if (isCreator && taskType == 'family' && familyId != null)
-                    FutureBuilder<QuerySnapshot>(
-                      future: _firestore
-                          .collection('users')
-                          .where('familyId', isEqualTo: familyId)
-                          .get(),
-                      builder: (context, snapshot) {
-                        if (snapshot.connectionState ==
-                            ConnectionState.waiting) {
-                          return const CircularProgressIndicator();
-                        }
-
-                        if (snapshot.hasError) {
-                          return Text('Error: ${snapshot.error}');
-                        }
-
-                        // Filter out the creator from the family member list
-                        final familyMembers = snapshot.data!.docs
-                            .where((doc) =>
-                                doc['role'] != 'creator') // Exclude creator
-                            .map((doc) => {
-                                  'id': doc.id,
-                                  'email': doc['email'],
-                                })
-                            .toList();
-
-                        return DropdownButtonFormField<String>(
-                          value: assignedTo,
-                          decoration: const InputDecoration(
-                            labelText: 'Assign Task To',
+                    const SizedBox(height: 16),
+                    DropdownButtonFormField<String>(
+                      value: taskType,
+                      decoration: const InputDecoration(
+                        labelText: 'Task Type',
+                      ),
+                      onChanged: (value) {
+                        setState(() {
+                          taskType = value!;
+                          // Reset assignedTo when switching task types
+                          if (taskType == 'personal') {
+                            assignedTo = null;
+                          }
+                        });
+                      },
+                      items: taskTypes.map((String type) {
+                        return DropdownMenuItem<String>(
+                          value: type,
+                          child: Text(type),
+                        );
+                      }).toList(),
+                    ),
+                    const SizedBox(height: 16),
+                    DropdownButtonFormField<String>(
+                      value: priority,
+                      decoration: const InputDecoration(
+                        labelText: 'Priority',
+                      ),
+                      onChanged: (value) {
+                        setState(() {
+                          priority = value!;
+                        });
+                      },
+                      items: priorities.map((String p) {
+                        return DropdownMenuItem<String>(
+                          value: p,
+                          child: Text(p),
+                        );
+                      }).toList(),
+                    ),
+                    const SizedBox(height: 16),
+                    if (showAssigneeDropdown && familyMembers.isNotEmpty)
+                      DropdownButtonFormField<String>(
+                        value: assignedTo,
+                        decoration: const InputDecoration(
+                          labelText: 'Assign To',
+                        ),
+                        hint: const Text('Select assignee'),
+                        onChanged: (value) {
+                          setState(() {
+                            assignedTo = value;
+                          });
+                        },
+                        items: [
+                          const DropdownMenuItem<String>(
+                            value: 'all',
+                            child: Text('All members'),
                           ),
-                          items: familyMembers.map((member) {
+                          ...familyMembers.map((member) {
                             return DropdownMenuItem<String>(
-                              value: member['id'],
+                              value:
+                                  member['email'], // Using email instead of ID
                               child: Text(member['email']),
                             );
                           }).toList(),
-                          onChanged: (value) {
-                            setState(() {
-                              assignedTo = value; // Set assigned member's ID
-                            });
-                          },
+                        ],
+                      ),
+                    const SizedBox(height: 16),
+                    ElevatedButton(
+                      onPressed: () async {
+                        final picked = await showDatePicker(
+                          context: context,
+                          initialDate: selectedDate,
+                          firstDate: DateTime.now(),
+                          lastDate: DateTime(2025),
                         );
+                        if (picked != null) {
+                          setState(() {
+                            selectedDate = picked;
+                          });
+                        }
                       },
+                      child: Text(
+                        'Due Date: ${selectedDate.toString().split(' ')[0]}',
+                      ),
                     ),
-                  const SizedBox(height: 16),
-
-                  DropdownButtonFormField<String>(
-                    value: priority,
-                    decoration: const InputDecoration(
-                      labelText: 'Priority',
-                    ),
-                    items: TaskPriorityColors.priorityColors.keys
-                        .map((String key) {
-                      return DropdownMenuItem<String>(
-                        value: key,
-                        child: Row(
-                          children: [
-                            Container(
-                              width: 16,
-                              height: 16,
-                              decoration: BoxDecoration(
-                                color: TaskPriorityColors.getColor(key),
-                                shape: BoxShape.circle,
-                              ),
-                            ),
-                            const SizedBox(width: 8),
-                            Text(key.toUpperCase()),
-                          ],
-                        ),
-                      );
-                    }).toList(),
-                    onChanged: (value) {
-                      setState(() {
-                        priority = value!;
-                      });
-                    },
-                  ),
-                  const SizedBox(height: 16),
-                  TextButton(
-                    onPressed: () async {
-                      final DateTime? picked = await showDatePicker(
-                        context: context,
-                        initialDate: selectedDate,
-                        firstDate: DateTime.now(),
-                        lastDate: DateTime(2025),
-                      );
-                      if (picked != null) {
-                        selectedDate = picked;
-                      }
-                    },
-                    child: const Text('Select Due Date'),
-                  ),
-                ],
-              );
-            },
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('Cancel'),
-            ),
-            TextButton(
-              onPressed: () {
-                if (newTaskTitle.isNotEmpty) {
-                  _addTask(newTaskTitle, selectedDate, taskType, priority,
-                      assignedTo, description);
-                  Navigator.pop(context);
-                }
-              },
-              child: const Text('Add'),
-            ),
-          ],
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(context),
+                  child: const Text('Cancel'),
+                ),
+                TextButton(
+                  onPressed: () {
+                    if (newTaskTitle.isNotEmpty) {
+                      _addTask(newTaskTitle, selectedDate, taskType, priority,
+                          assignedTo, description);
+                      Navigator.pop(context);
+                    }
+                  },
+                  child: const Text('Add'),
+                ),
+              ],
+            );
+          },
         );
       },
     );
@@ -423,14 +429,25 @@ class _ToDoListScreenState extends State<ToDoListScreen> {
               onDismissed: (direction) {
                 _deleteTask(task.id!);
               },
-              child: TaskCard(
-                task: task,
-                onComplete: () =>
-                    _updateTaskStatus(task.id!, !task.isCompleted),
-                additionalInfo: task.taskType == 'family'
-                    ? 'Assigned to: ${task.assignedTo != null ? task.assignedTo : "Unassigned"}'
-                    : 'Personal Task',
-                priorityColor: TaskPriorityColors.getColor(task.priority),
+              child: GestureDetector(
+                onTap: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (context) => TaskDetailViewScreen(
+                          task: task), // Navigating to new screen
+                    ),
+                  );
+                },
+                child: TaskCard(
+                  task: task,
+                  onComplete: () =>
+                      _updateTaskStatus(task.id!, !task.isCompleted),
+                  additionalInfo: task.taskType == 'family'
+                      ? 'Assigned to: ${task.assignedTo != null ? task.assignedTo : "Unassigned"}'
+                      : 'Personal Task',
+                  priorityColor: TaskPriorityColors.getColor(task.priority),
+                ),
               ),
             );
           },
@@ -472,10 +489,7 @@ class _ToDoListScreenState extends State<ToDoListScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  // Family Invites widget - show only if user is part of a family
                   if (familyId != null) FamilyInvites(),
-
-                  // Personal Tasks Section
                   StreamBuilder<QuerySnapshot>(
                     stream: _personalTasksStream,
                     builder: (context, snapshot) {
@@ -499,8 +513,6 @@ class _ToDoListScreenState extends State<ToDoListScreen> {
                       );
                     },
                   ),
-
-                  // Family Tasks Section - only show if user has a family
                   if (familyId != null && _familyTasksStream != null)
                     StreamBuilder<QuerySnapshot>(
                       stream: _familyTasksStream,
@@ -534,10 +546,8 @@ class _ToDoListScreenState extends State<ToDoListScreen> {
       floatingActionButton: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          // Family Management button - show only if the user is a creator and has a family
           _buildFamilyManagementButton(),
           const SizedBox(width: 16),
-          // Add New Task button
           FloatingActionButton(
             heroTag: 'addTask',
             onPressed: _showAddTaskDialog,

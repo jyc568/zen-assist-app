@@ -22,7 +22,7 @@ class _CreateAccountPageState extends State<CreateAccountPage> {
 
   String? _familyId;
   String _accountType = 'user'; // Default to 'Regular User'
-  bool _isCreatingFamily = false;
+  //bool _isCreatingFamily = false;
 
   // Method to handle family ID input dialog
   void _showFamilyIdDialog() {

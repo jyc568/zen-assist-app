@@ -103,6 +103,9 @@ class _MainPageState extends State<MainPage> {
       final endOfMonth =
           DateTime(_selectedDate.year, _selectedDate.month + 1, 0);
 
+      print(
+          'Loading events for user: ${_auth.currentUser!.uid}, Date Range: $startOfMonth to $endOfMonth');
+
       final snapshot = await _firestore
           .collection('events')
           .where('userId', isEqualTo: _auth.currentUser!.uid)
@@ -113,11 +116,14 @@ class _MainPageState extends State<MainPage> {
           .orderBy('dateTime')
           .get();
 
+      // Debugging - log number of events fetched
+      print("Fetched events: ${snapshot.docs.length}");
+
       _calendarEvents = snapshot.docs
           .map((doc) => CalendarEvent.fromMap(doc.data()))
           .toList();
 
-      setState(() {});
+      setState(() {}); // Trigger UI update
     } catch (e) {
       _showErrorSnackBar('Error loading events: $e');
     } finally {
@@ -137,10 +143,10 @@ class _MainPageState extends State<MainPage> {
         title: _eventTitle!,
         dateTime: _eventDateTime!,
         endDateTime: _eventEndDateTime,
-        priority: _eventPriority ?? 'medium', // Use the selected priority
+        priority: _eventPriority ?? 'medium',
         userId: _auth.currentUser!.uid,
         description: _eventDescription,
-        isRecurring: _eventIsRecurring ?? false, // Use the selected isRecurring
+        isRecurring: _eventIsRecurring ?? false,
         recurringPattern: _eventRecurringPattern,
         tags: _eventTags,
       );
@@ -150,16 +156,20 @@ class _MainPageState extends State<MainPage> {
           .doc(newEvent.id)
           .set(newEvent.toMap());
 
-      // Clear input fields and reload events
-      _eventTitle = null;
-      _eventDateTime = null;
-      _eventPriority = null;
-      _eventDescription = null;
-      _eventEndDateTime = null;
-      _eventIsRecurring = null;
-      _eventRecurringPattern = null;
-      _eventTags = null;
+      void clearEventFields() {
+        _eventTitle = null;
+        _eventDateTime = null;
+        _eventPriority = null;
+        _eventDescription = null;
+        _eventEndDateTime = null;
+        _eventIsRecurring = null;
+        _eventRecurringPattern = null;
+        _eventTags = null;
+      }
+
+      // Reload events for the current month or date
       await _loadCalendarEvents();
+      clearEventFields();
       _showSuccessSnackBar('Event added successfully');
     } catch (e) {
       _showErrorSnackBar('Error saving event: $e');
