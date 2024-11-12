@@ -2,10 +2,10 @@ import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:intl/intl.dart';
-import 'package:zen_assist/widgets/bottom_nav_bar.dart';
-import 'package:table_calendar/table_calendar.dart';
+import 'package:google_generative_ai/google_generative_ai.dart';
+import 'dart:convert';
 
-//WeeklyMealPlanPage could use some work, GEMINI API hasnt been added yet
+import 'package:zen_assist/widgets/bottom_nav_bar.dart';
 
 class WeeklyMealPlanPage extends StatefulWidget {
   const WeeklyMealPlanPage({super.key});
@@ -14,347 +14,231 @@ class WeeklyMealPlanPage extends StatefulWidget {
   _WeeklyMealPlanPageState createState() => _WeeklyMealPlanPageState();
 }
 
-bool _isCreateMode = false;
-final _formKey = GlobalKey<FormState>();
-final TextEditingController _breakfastController = TextEditingController();
-final TextEditingController _lunchController = TextEditingController();
-final TextEditingController _dinnerController = TextEditingController();
-final TextEditingController _snacksController = TextEditingController();
+DateTime _lastLoadedDate = DateTime.now();
 
 class _WeeklyMealPlanPageState extends State<WeeklyMealPlanPage> {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   final FirebaseAuth _auth = FirebaseAuth.instance;
-  late Stream<QuerySnapshot> _mealPlanStream;
-  DateTime _selectedDate = DateTime.now();
-  DateTime _focusedDay = DateTime.now();
-  CalendarFormat _calendarFormat = CalendarFormat.week;
+  final GenerativeModel _model = GenerativeModel(
+    model: 'gemini-pro',
+    apiKey: 'AIzaSyBW5SdgUyQ7eZGvS6DJPTr_zShShqIFA4c',
+  );
+
+  late DateTime _selectedWeekStart;
+  int _selectedDayIndex = 0;
+  bool _isLoading = false;
+  Map<String, Map<String, String>> _weeklyMealPlan = {};
+  Map<String, String> _documentIds = {}; // Store Firestore document IDs
+  List<String> _weekDays = [];
+
+  final _mealTypes = ['Breakfast', 'Lunch', 'Dinner', 'Snacks'];
 
   @override
-  void initState() {
-    super.initState();
-    _initializeMealPlanStream();
-    _checkAndCreateTodayMealPlan();
-    _scheduleCleanup();
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _initializeWeek();
+    _loadWeeklyMealPlan();
   }
 
-  @override
-  void dispose() {
-    _breakfastController.dispose();
-    _lunchController.dispose();
-    _dinnerController.dispose();
-    _snacksController.dispose();
-    super.dispose();
-  }
-
-  bool _isDateValid(DateTime date) {
+  void _initializeWeek() {
+    // Get today's date
     final now = DateTime.now();
-    return date.isAfter(DateTime(now.year, now.month, now.day - 1));
+    // If there's a saved date in shared preferences, use that instead
+    _selectedWeekStart = now.subtract(Duration(days: now.weekday - 1));
+    _lastLoadedDate = _selectedWeekStart;
+
+    // Generate week days
+    _updateWeekDays();
   }
 
-  void _showCreateMealPlanDialog() {
-    if (!_isDateValid(_selectedDate)) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Cannot create meal plan for past dates'),
-          backgroundColor: Colors.red,
-        ),
-      );
-      return;
-    }
-
-    // Reset controllers
-    _breakfastController.clear();
-    _lunchController.clear();
-    _dinnerController.clear();
-    _snacksController.clear();
-
-    showDialog(
-      context: context,
-      builder: (BuildContext context) {
-        return AlertDialog(
-          title: Text(
-              'Create Meal Plan for ${_selectedDate.toString().split(' ')[0]}'),
-          content: Form(
-            key: _formKey,
-            child: SingleChildScrollView(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  TextFormField(
-                    controller: _breakfastController,
-                    decoration: const InputDecoration(
-                      labelText: 'Breakfast',
-                      hintText: 'Enter breakfast meal',
-                    ),
-                    validator: (value) => value?.isEmpty ?? true
-                        ? 'Please enter a breakfast meal'
-                        : null,
-                  ),
-                  const SizedBox(height: 16),
-                  TextFormField(
-                    controller: _lunchController,
-                    decoration: const InputDecoration(
-                      labelText: 'Lunch',
-                      hintText: 'Enter lunch meal',
-                    ),
-                    validator: (value) => value?.isEmpty ?? true
-                        ? 'Please enter a lunch meal'
-                        : null,
-                  ),
-                  const SizedBox(height: 16),
-                  TextFormField(
-                    controller: _dinnerController,
-                    decoration: const InputDecoration(
-                      labelText: 'Dinner',
-                      hintText: 'Enter dinner meal',
-                    ),
-                    validator: (value) => value?.isEmpty ?? true
-                        ? 'Please enter a dinner meal'
-                        : null,
-                  ),
-                  const SizedBox(height: 16),
-                  TextFormField(
-                    controller: _snacksController,
-                    decoration: const InputDecoration(
-                      labelText: 'Snacks',
-                      hintText: 'Enter snacks (optional)',
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('Cancel'),
-            ),
-            ElevatedButton(
-              onPressed: () async {
-                if (_formKey.currentState!.validate()) {
-                  await _createCustomMealPlan();
-                  if (mounted) Navigator.pop(context);
-                }
-              },
-              child: const Text('Create'),
-            ),
-          ],
-        );
-      },
-    );
-  }
-
-  Future<void> _createCustomMealPlan() async {
-    try {
-      final selectedDate = DateTime(
-        _selectedDate.year,
-        _selectedDate.month,
-        _selectedDate.day,
-      );
-
-      // Check if a meal plan already exists for this date
-      final existingPlan = await _firestore
-          .collection('mealPlans')
-          .where('userId', isEqualTo: _auth.currentUser?.uid)
-          .where('date', isEqualTo: selectedDate)
-          .get();
-
-      if (existingPlan.docs.isNotEmpty) {
-        // Update existing meal plan
-        await existingPlan.docs.first.reference.update({
-          'breakfast': _breakfastController.text,
-          'lunch': _lunchController.text,
-          'dinner': _dinnerController.text,
-          'snacks': _snacksController.text,
-          'updatedAt': FieldValue.serverTimestamp(),
-        });
-      } else {
-        // Create new meal plan
-        await _firestore.collection('mealPlans').add({
-          'userId': _auth.currentUser?.uid,
-          'date': selectedDate,
-          'breakfast': _breakfastController.text,
-          'lunch': _lunchController.text,
-          'dinner': _dinnerController.text,
-          'snacks': _snacksController.text,
-          'createdAt': FieldValue.serverTimestamp(),
-          'updatedAt': FieldValue.serverTimestamp(),
-        });
-      }
-
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Meal plan created successfully!')),
-        );
-      }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error creating meal plan: $e')),
-        );
-      }
-    }
-  }
-
-  void _initializeMealPlanStream() {
-    final startOfWeek =
-        DateTime.now().subtract(Duration(days: DateTime.now().weekday - 1));
-    final endOfWeek = startOfWeek.add(const Duration(days: 7));
-
-    _mealPlanStream = _firestore
-        .collection('mealPlans')
-        .where('userId', isEqualTo: _auth.currentUser?.uid)
-        .where('date', isGreaterThanOrEqualTo: startOfWeek)
-        .where('date', isLessThan: endOfWeek)
-        .orderBy('date')
-        .snapshots();
-  }
-
-  void _scheduleCleanup() {
-    final thirtyDaysAgo = DateTime.now().subtract(const Duration(days: 30));
-    _firestore
-        .collection('mealPlans')
-        .where('userId', isEqualTo: _auth.currentUser?.uid)
-        .where('date', isLessThan: thirtyDaysAgo)
-        .get()
-        .then((snapshot) {
-      for (var doc in snapshot.docs) {
-        doc.reference.delete();
-      }
+  void _updateWeekDays() {
+    _weekDays = List.generate(7, (index) {
+      final day = _selectedWeekStart.add(Duration(days: index));
+      return DateFormat('E, MMM d').format(day);
     });
   }
 
-  Future<void> _checkAndCreateTodayMealPlan() async {
-    final today = DateTime(
-      DateTime.now().year,
-      DateTime.now().month,
-      DateTime.now().day,
-    );
+  Future<void> _loadWeeklyMealPlan() async {
+    setState(() => _isLoading = true);
 
-    final snapshot = await _firestore
-        .collection('mealPlans')
-        .where('userId', isEqualTo: _auth.currentUser?.uid)
-        .where('date', isEqualTo: today)
-        .get();
-
-    if (snapshot.docs.isEmpty) {
-      await _firestore.collection('mealPlans').add({
-        'userId': _auth.currentUser?.uid,
-        'date': today,
-        'breakfast': '',
-        'lunch': '',
-        'dinner': '',
-        'snacks': '',
-        'createdAt': FieldValue.serverTimestamp(),
-      });
-    }
-  }
-
-  Future<Map<String, dynamic>?> _getMealPlanForDate(DateTime date) async {
-    final snapshot = await _firestore
-        .collection('mealPlans')
-        .where('userId', isEqualTo: _auth.currentUser?.uid)
-        .where('date', isEqualTo: date)
-        .get();
-
-    if (snapshot.docs.isNotEmpty) {
-      return snapshot.docs.first.data();
-    }
-    return null;
-  }
-
-  Future<void> _updateMealPlan(String type, String meal) async {
     try {
-      final selectedDate = DateTime(
-        _selectedDate.year,
-        _selectedDate.month,
-        _selectedDate.day,
-      );
+      // Calculate the exact start and end of the selected week
+      final weekStart = DateTime(_selectedWeekStart.year,
+          _selectedWeekStart.month, _selectedWeekStart.day);
+      final weekEnd = weekStart.add(const Duration(days: 7));
 
+      print(
+          'Loading meals from ${DateFormat('yyyy-MM-dd').format(weekStart)} to ${DateFormat('yyyy-MM-dd').format(weekEnd)}');
+
+      // Initialize empty plan for each day
+      Map<String, Map<String, String>> weekPlan = {};
+      Map<String, String> docIds = {};
+
+      // Initialize all days in the week with empty meals
+      for (int i = 0; i < 7; i++) {
+        final date = weekStart.add(Duration(days: i));
+        final dateStr = DateFormat('yyyy-MM-dd').format(date);
+        weekPlan[dateStr] = {
+          'breakfast': '',
+          'lunch': '',
+          'dinner': '',
+          'snacks': '',
+        };
+      }
+
+      // Query Firestore for the current week's meal plans
       final snapshot = await _firestore
-          .collection('mealPlans')
+          .collection('mealplans')
           .where('userId', isEqualTo: _auth.currentUser?.uid)
-          .where('date', isEqualTo: selectedDate)
+          .where('date', isGreaterThanOrEqualTo: Timestamp.fromDate(weekStart))
+          .where('date', isLessThan: Timestamp.fromDate(weekEnd))
           .get();
 
-      if (snapshot.docs.isNotEmpty) {
-        await snapshot.docs.first.reference.update({
-          type.toLowerCase(): meal,
-          'updatedAt': FieldValue.serverTimestamp(),
-        });
-      } else {
-        await _firestore.collection('mealPlans').add({
-          'userId': _auth.currentUser?.uid,
-          'date': selectedDate,
-          type.toLowerCase(): meal,
-          'createdAt': FieldValue.serverTimestamp(),
-          'updatedAt': FieldValue.serverTimestamp(),
+      print('Found ${snapshot.docs.length} meal plans for the week');
+
+      // Fill in existing plans
+      for (var doc in snapshot.docs) {
+        final data = doc.data();
+        final date = (data['date'] as Timestamp).toDate();
+        final dateStr = DateFormat('yyyy-MM-dd').format(date);
+
+        print('Processing meal plan for date: $dateStr');
+
+        weekPlan[dateStr] = {
+          'breakfast': data['breakfast']?.toString() ?? '',
+          'lunch': data['lunch']?.toString() ?? '',
+          'dinner': data['dinner']?.toString() ?? '',
+          'snacks': data['snacks']?.toString() ?? '',
+        };
+
+        docIds[dateStr] = doc.id;
+      }
+
+      if (mounted) {
+        setState(() {
+          _weeklyMealPlan = weekPlan;
+          _documentIds = docIds;
+          _lastLoadedDate = weekStart;
+          _isLoading = false;
         });
       }
     } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Error updating meal plan: $e')),
-      );
-    }
-  }
-
-  Future<void> _copyMealPlan(DateTime fromDate, DateTime toDate) async {
-    final mealPlan = await _getMealPlanForDate(fromDate);
-    if (mealPlan != null) {
-      await _firestore.collection('mealPlans').add({
-        'userId': _auth.currentUser?.uid,
-        'date': toDate,
-        'breakfast': mealPlan['breakfast'],
-        'lunch': mealPlan['lunch'],
-        'dinner': mealPlan['dinner'],
-        'snacks': mealPlan['snacks'],
-        'createdAt': FieldValue.serverTimestamp(),
-      });
-
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Meal plan copied successfully!')),
-      );
-    }
-  }
-
-  Future<Map<String, dynamic>> _generateWeeklyStats() async {
-    final startOfWeek =
-        _selectedDate.subtract(Duration(days: _selectedDate.weekday - 1));
-    final endOfWeek = startOfWeek.add(const Duration(days: 7));
-
-    final snapshot = await _firestore
-        .collection('mealPlans')
-        .where('userId', isEqualTo: _auth.currentUser?.uid)
-        .where('date', isGreaterThanOrEqualTo: startOfWeek)
-        .where('date', isLessThan: endOfWeek)
-        .get();
-
-    int totalMeals = 0;
-    Map<String, int> mealTypeCount = {
-      'breakfast': 0,
-      'lunch': 0,
-      'dinner': 0,
-      'snacks': 0,
-    };
-
-    for (var doc in snapshot.docs) {
-      final data = doc.data();
-      for (var type in mealTypeCount.keys) {
-        if (data[type] != null && data[type].toString().isNotEmpty) {
-          mealTypeCount[type] = (mealTypeCount[type] ?? 0) + 1;
-          totalMeals++;
-        }
+      print('Error loading meal plan: $e');
+      if (mounted) {
+        setState(() => _isLoading = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error loading meal plans: $e')),
+        );
       }
     }
-
-    return {
-      'totalMeals': totalMeals,
-      'mealTypeCount': mealTypeCount,
-      'completionRate': (totalMeals / (snapshot.docs.length * 4) * 100).round(),
-    };
   }
 
-  Future<List<String>> _generateMealSuggestions(String mealType) async {
+  Future<void> _saveMealPlan(
+      String dateStr, String mealType, String meal) async {
+    try {
+      setState(() => _isLoading = true);
+
+      // Parse the date string to DateTime
+      final date = DateFormat('yyyy-MM-dd').parse(dateStr);
+
+      // Ensure we're saving with the correct time (start of day)
+      final normalizedDate = DateTime(date.year, date.month, date.day);
+
+      if (_documentIds.containsKey(dateStr)) {
+        // Update existing document
+        await _firestore
+            .collection('mealplans')
+            .doc(_documentIds[dateStr])
+            .update({
+          mealType.toLowerCase(): meal,
+          'updatedAt': FieldValue.serverTimestamp(),
+        });
+      } else {
+        // Create new document with normalized date
+        final docRef = await _firestore.collection('mealplans').add({
+          'userId': _auth.currentUser?.uid,
+          'date': Timestamp.fromDate(normalizedDate),
+          mealType.toLowerCase(): meal,
+          'breakfast': mealType == 'breakfast' ? meal : '',
+          'lunch': mealType == 'lunch' ? meal : '',
+          'dinner': mealType == 'dinner' ? meal : '',
+          'snacks': mealType == 'snacks' ? meal : '',
+          'createdAt': FieldValue.serverTimestamp(),
+          'updatedAt': FieldValue.serverTimestamp(),
+        });
+
+        _documentIds[dateStr] = docRef.id;
+      }
+
+      // Update local state
+      if (_weeklyMealPlan[dateStr] == null) {
+        _weeklyMealPlan[dateStr] = {
+          'breakfast': '',
+          'lunch': '',
+          'dinner': '',
+          'snacks': '',
+        };
+      }
+      _weeklyMealPlan[dateStr]![mealType.toLowerCase()] = meal;
+
+      // Reload the week's data to ensure everything is in sync
+      await _loadWeeklyMealPlan();
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Meal plan saved successfully')),
+        );
+      }
+    } catch (e) {
+      print('Error saving meal plan: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error saving meal plan: $e')),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isLoading = false);
+      }
+    }
+  }
+
+  Future<List<String>> _getAIRecommendations(String mealType) async {
+    try {
+      // Analyze user's past meal preferences
+      final userPreferences = await _analyzePastMealPreferences(mealType);
+
+      // Generate prompt for Gemini
+      final prompt = '''
+        Based on the user's past meal preferences: ${jsonEncode(userPreferences)},
+        suggest 5 different ${mealType.toLowerCase()} options that are:
+        1. Healthy and balanced
+        2. Similar to their preferences
+        3. Easy to prepare
+        4. Healthy and Commonly Found in Malaysian Cuisine
+        Please provide only the names of the meals in a list format.
+      ''';
+
+      final content = [Content.text(prompt)];
+      final response = await _model.generateContent(content);
+
+      // Parse response and extract meal suggestions
+      final suggestions = response.text
+              ?.split('\n')
+              .where((line) => line.trim().isNotEmpty)
+              .map((line) => line.replaceAll(RegExp(r'^\d+\.\s*'), ''))
+              .take(5)
+              .toList() ??
+          [];
+
+      return suggestions;
+    } catch (e) {
+      print('Error getting AI recommendations: $e');
+      return _getDefaultSuggestions(mealType);
+    }
+  }
+
+  Future<List<String?>> _analyzePastMealPreferences(String mealType) async {
     final snapshot = await _firestore
         .collection('mealPlans')
         .where('userId', isEqualTo: _auth.currentUser?.uid)
@@ -362,288 +246,278 @@ class _WeeklyMealPlanPageState extends State<WeeklyMealPlanPage> {
         .limit(10)
         .get();
 
-    final meals = snapshot.docs
-        .map((doc) => (doc.data())[mealType.toLowerCase()])
-        .where((meal) => meal != null && meal.toString().isNotEmpty)
-        .toSet()
+    return snapshot.docs
+        .map((doc) => doc.data()[mealType.toLowerCase()] as String?)
+        .where((meal) => meal != null && meal.isNotEmpty)
         .toList();
-
-    if (meals.length < 3) {
-      meals.addAll(_getDefaultSuggestions(mealType));
-    }
-
-    return meals.take(5).cast<String>().toList();
   }
 
   List<String> _getDefaultSuggestions(String mealType) {
-    switch (mealType.toLowerCase()) {
-      case 'breakfast':
-        return [
-          'Oatmeal with fruits and nuts',
-          'Yogurt parfait',
-          'Whole grain toast with avocado',
-          'Smoothie bowl',
-          'Eggs and vegetables'
-        ];
-      case 'lunch':
-        return [
-          'Grilled chicken salad',
-          'Quinoa bowl',
-          'Turkey wrap',
-          'Mediterranean pasta',
-          'Vegetable soup with bread'
-        ];
-      case 'dinner':
-        return [
-          'Salmon with roasted vegetables',
-          'Stir-fry with brown rice',
-          'Lean beef with sweet potato',
-          'Baked chicken with quinoa',
-          'Vegetarian curry'
-        ];
-      case 'snacks':
-        return [
-          'Mixed nuts and dried fruits',
-          'Greek yogurt with berries',
-          'Apple with almond butter',
-          'Hummus with vegetables',
-          'Trail mix'
-        ];
-      default:
-        return [];
+    // Fallback suggestions if AI fails
+    final defaults = {
+      'breakfast': [
+        'Oatmeal with fruits',
+        'Yogurt parfait',
+        'Whole grain toast with eggs',
+        'Smoothie bowl',
+        'Pancakes with berries'
+      ],
+      'lunch': [
+        'Grilled chicken salad',
+        'Quinoa bowl',
+        'Turkey sandwich',
+        'Vegetable soup',
+        'Tuna wrap'
+      ],
+      'dinner': [
+        'Baked salmon',
+        'Stir-fried vegetables',
+        'Chicken breast with rice',
+        'Pasta with marinara',
+        'Vegetable curry'
+      ],
+      'snacks': [
+        'Mixed nuts',
+        'Greek yogurt',
+        'Apple with peanut butter',
+        'Hummus with carrots',
+        'Trail mix'
+      ],
+    };
+    return defaults[mealType.toLowerCase()] ?? [];
+  }
+
+  Future<void> _deleteMeal(String dateStr, String mealType) async {
+    try {
+      if (_documentIds.containsKey(dateStr)) {
+        await _firestore
+            .collection('mealPlans')
+            .doc(_documentIds[dateStr])
+            .update({
+          mealType.toLowerCase(): '',
+          'updatedAt': FieldValue.serverTimestamp(),
+        });
+
+        setState(() {
+          _weeklyMealPlan[dateStr]![mealType.toLowerCase()] = '';
+        });
+      }
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Error deleting meal: $e')),
+      );
     }
   }
 
-  void _showWeeklyStats() async {
-    final stats = await _generateWeeklyStats();
+  void _showEditDeleteDialog(
+      String dateStr, String mealType, String currentMeal) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('Edit $mealType'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.edit),
+              title: const Text('Edit Meal'),
+              onTap: () {
+                Navigator.pop(context);
+                _showCustomMealInput(dateStr, mealType, currentMeal);
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.delete, color: Colors.red),
+              title: const Text('Delete Meal',
+                  style: TextStyle(color: Colors.red)),
+              onTap: () {
+                _deleteMeal(dateStr, mealType);
+                Navigator.pop(context);
+              },
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showMealPlanDialog(String dateStr, String mealType) async {
+    final suggestions = await _getAIRecommendations(mealType);
 
     if (!mounted) return;
 
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Weekly Statistics'),
+        title: Text('Add $mealType'),
         content: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('Total Meals Planned: ${stats['totalMeals']}'),
-            Text('Completion Rate: ${stats['completionRate']}%'),
-            const SizedBox(height: 8),
-            const Text('Meals by Type:',
+            const Text('Suggestions:',
                 style: TextStyle(fontWeight: FontWeight.bold)),
-            ...(stats['mealTypeCount'] as Map<String, int>).entries.map(
-                  (e) => Text('${e.key}: ${e.value}'),
-                ),
+            const SizedBox(height: 8),
+            ...suggestions.map((meal) => ListTile(
+                  title: Text(meal),
+                  onTap: () {
+                    _saveMealPlan(dateStr, mealType.toLowerCase(), meal);
+                    Navigator.pop(context);
+                  },
+                )),
+            const SizedBox(height: 16),
+            TextButton(
+              onPressed: () {
+                // Show text input for custom meal
+                _showCustomMealInput(dateStr, mealType);
+                Navigator.pop(context);
+              },
+              child: const Text('Add Custom Meal'),
+            ),
           ],
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
-            child: const Text('Close'),
+            child: const Text('Cancel'),
           ),
         ],
       ),
     );
   }
 
-  void _showMealSuggestions() async {
+  void _showCustomMealInput(String dateStr, String mealType,
+      [String? initialValue]) {
+    final controller = TextEditingController(text: initialValue);
+
     showDialog(
       context: context,
-      builder: (BuildContext context) {
-        return AlertDialog(
-          title: const Text('Meal Suggestions'),
-          content: SizedBox(
-            width: double.maxFinite,
-            child: FutureBuilder<Map<String, List<String>>>(
-              future: Future.wait([
-                _generateMealSuggestions('Breakfast'),
-                _generateMealSuggestions('Lunch'),
-                _generateMealSuggestions('Dinner'),
-                _generateMealSuggestions('Snacks'),
-              ]).then((results) => {
-                    'Breakfast': results[0],
-                    'Lunch': results[1],
-                    'Dinner': results[2],
-                    'Snacks': results[3],
-                  }),
-              builder: (context, snapshot) {
-                if (snapshot.connectionState == ConnectionState.waiting) {
-                  return const Center(child: CircularProgressIndicator());
-                }
+      builder: (context) => AlertDialog(
+        title: Text(
+            initialValue != null ? 'Edit $mealType' : 'Add Custom $mealType'),
+        content: TextField(
+          controller: controller,
+          decoration: InputDecoration(
+            hintText: 'Enter your $mealType',
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () {
+              if (controller.text.isNotEmpty) {
+                _saveMealPlan(dateStr, mealType.toLowerCase(), controller.text);
+                Navigator.pop(context);
+              }
+            },
+            child: const Text('Save'),
+          ),
+        ],
+      ),
+    );
+  }
 
-                if (snapshot.hasError) {
-                  return Text('Error: ${snapshot.error}');
-                }
+  Widget _buildDaySelector() {
+    return SizedBox(
+      height: 60,
+      child: ListView.builder(
+        scrollDirection: Axis.horizontal,
+        itemCount: _weekDays.length,
+        itemBuilder: (context, index) {
+          return Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 4),
+            child: ChoiceChip(
+              label: Text(_weekDays[index]),
+              selected: _selectedDayIndex == index,
+              onSelected: (selected) {
+                setState(() => _selectedDayIndex = index);
+              },
+            ),
+          );
+        },
+      ),
+    );
+  }
 
-                final suggestions = snapshot.data!;
-                return SingleChildScrollView(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: suggestions.entries.map((entry) {
-                      return Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            entry.key,
-                            style: const TextStyle(
-                              fontWeight: FontWeight.bold,
-                              fontSize: 16,
+  Widget _buildMealPlanCard() {
+    final dateStr = DateFormat('yyyy-MM-dd')
+        .format(_selectedWeekStart.add(Duration(days: _selectedDayIndex)));
+    final dayPlan = _weeklyMealPlan[dateStr] ?? {};
+
+    return Card(
+      margin: const EdgeInsets.all(16),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: _mealTypes.map((mealType) {
+            final meal = dayPlan[mealType.toLowerCase()] ?? '';
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Text(
+                      mealType,
+                      style: const TextStyle(
+                        fontWeight: FontWeight.bold,
+                        fontSize: 16,
+                      ),
+                    ),
+                    Row(
+                      children: [
+                        if (meal.isNotEmpty)
+                          IconButton(
+                            icon: const Icon(Icons.more_vert),
+                            onPressed: () => _showEditDeleteDialog(
+                              dateStr,
+                              mealType,
+                              meal,
                             ),
                           ),
-                          const SizedBox(height: 8),
-                          ...entry.value.map((meal) => ListTile(
-                                title: Text(meal),
-                                onTap: () {
-                                  _updateMealPlan(entry.key, meal);
-                                  Navigator.pop(context);
-                                },
-                              )),
-                          const SizedBox(height: 16),
-                        ],
-                      );
-                    }).toList(),
+                        IconButton(
+                          icon: const Icon(Icons.add),
+                          onPressed: () =>
+                              _showMealPlanDialog(dateStr, mealType),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+                if (meal.isNotEmpty)
+                  GestureDetector(
+                    onTap: () => _showEditDeleteDialog(
+                      dateStr,
+                      mealType,
+                      meal,
+                    ),
+                    child: Padding(
+                      padding: const EdgeInsets.only(left: 8, bottom: 16),
+                      child: Text(meal),
+                    ),
+                  )
+                else
+                  Padding(
+                    padding: const EdgeInsets.only(left: 8, bottom: 16),
+                    child: Text(
+                      'Tap + to add ${mealType.toLowerCase()}',
+                      style: TextStyle(color: Colors.grey[600], fontSize: 14),
+                    ),
                   ),
-                );
-              },
-            ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('Close'),
-            ),
-          ],
-        );
-      },
-    );
-  }
-
-  void _showCopyDialog() {
-    DateTime targetDate = _selectedDate;
-    showDialog(
-      context: context,
-      builder: (BuildContext context) {
-        return AlertDialog(
-          title: const Text('Copy Meal Plan'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const Text('Select target date:'),
-              const SizedBox(height: 16),
-              ElevatedButton(
-                onPressed: () async {
-                  final DateTime? picked = await showDatePicker(
-                    context: context,
-                    initialDate: targetDate,
-                    firstDate: DateTime.now(),
-                    lastDate: DateTime.now().add(const Duration(days: 365)),
-                  );
-                  if (picked != null && context.mounted) {
-                    targetDate = picked;
-                  }
-                },
-                child: const Text('Pick Date'),
-              ),
-            ],
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('Cancel'),
-            ),
-            TextButton(
-              onPressed: () {
-                _copyMealPlan(_selectedDate, targetDate);
-                Navigator.pop(context);
-              },
-              child: const Text('Copy'),
-            ),
-          ],
-        );
-      },
-    );
-  }
-
-  Widget _buildCalendarView() {
-    return TableCalendar(
-      firstDay: DateTime.now().subtract(const Duration(days: 365)),
-      lastDay: DateTime.now().add(const Duration(days: 365)),
-      focusedDay: _focusedDay,
-      selectedDayPredicate: (day) => isSameDay(_selectedDate, day),
-      calendarFormat: _calendarFormat,
-      onFormatChanged: (format) {
-        setState(() {
-          _calendarFormat = format;
-        });
-      },
-      onDaySelected: (selectedDay, focusedDay) {
-        setState(() {
-          _selectedDate = selectedDay;
-          _focusedDay = focusedDay;
-        });
-      },
-      calendarStyle: const CalendarStyle(
-        todayDecoration: BoxDecoration(
-          color: Colors.blue,
-          shape: BoxShape.circle,
+                const Divider(),
+              ],
+            );
+          }).toList(),
         ),
-        selectedDecoration: BoxDecoration(
-          color: Colors.green,
-          shape: BoxShape.circle,
-        ),
-      ),
-    );
-  }
-
-  Widget _buildMealPlanCard(DocumentSnapshot document) {
-    final data = document.data() as Map<String, dynamic>;
-    final date = (data['date'] as Timestamp).toDate();
-    final isSelected = _selectedDate.year == date.year &&
-        _selectedDate.month == date.month &&
-        _selectedDate.day == date.day;
-
-    return Container(
-      margin: const EdgeInsets.all(8.0),
-      padding: const EdgeInsets.all(16.0),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(12.0),
-        border: isSelected
-            ? Border.all(color: Theme.of(context).primaryColor, width: 2)
-            : null,
-        boxShadow: [
-          BoxShadow(
-            color: Colors.grey.withOpacity(0.1),
-            spreadRadius: 1,
-            blurRadius: 5,
-            offset: const Offset(0, 3), // changes position of shadow
-          ),
-        ],
-      ),
-      child: Column(
-        children: [
-          Text(
-            DateFormat.yMMMd().format(date),
-            style: const TextStyle(fontWeight: FontWeight.bold),
-          ),
-          const SizedBox(height: 8),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Text('Breakfast: ${data['breakfast'] ?? 'N/A'}'),
-              Text('Lunch: ${data['lunch'] ?? 'N/A'}'),
-            ],
-          ),
-          const SizedBox(height: 8),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Text('Dinner: ${data['dinner'] ?? 'N/A'}'),
-              Text('Snacks: ${data['snacks'] ?? 'N/A'}'),
-            ],
-          ),
-        ],
       ),
     );
   }
@@ -655,52 +529,44 @@ class _WeeklyMealPlanPageState extends State<WeeklyMealPlanPage> {
         title: const Text('Weekly Meal Plan'),
         actions: [
           IconButton(
-            icon: const Icon(Icons.add),
-            onPressed: _showCreateMealPlanDialog,
-            tooltip: 'Create custom meal plan',
+            icon: const Icon(Icons.refresh),
+            onPressed: _loadWeeklyMealPlan,
           ),
           IconButton(
-            icon: const Icon(Icons.copy),
-            onPressed: () => _showCopyDialog(),
-            tooltip: 'Copy meal plan',
-          ),
-          IconButton(
-            icon: const Icon(Icons.analytics),
-            onPressed: _showWeeklyStats,
-            tooltip: 'Weekly statistics',
-          ),
-          IconButton(
-            icon: const Icon(Icons.lightbulb_outline),
-            onPressed: _showMealSuggestions,
-            tooltip: 'Meal suggestions',
+            icon: const Icon(Icons.calendar_today),
+            onPressed: () async {
+              final DateTime? picked = await showDatePicker(
+                context: context,
+                initialDate: _selectedWeekStart,
+                firstDate: DateTime(2024),
+                lastDate: DateTime(2025),
+              );
+              if (picked != null) {
+                setState(() {
+                  // Ensure we start from the beginning of the week
+                  _selectedWeekStart =
+                      picked.subtract(Duration(days: picked.weekday - 1));
+                  _selectedDayIndex = 0;
+                  _updateWeekDays();
+                });
+                await _loadWeeklyMealPlan();
+              }
+            },
           ),
         ],
       ),
-      body: Column(
-        children: [
-          _buildCalendarView(),
-          Expanded(
-            child: StreamBuilder<QuerySnapshot>(
-              stream: _mealPlanStream,
-              builder: (context, snapshot) {
-                if (snapshot.connectionState == ConnectionState.waiting) {
-                  return const Center(child: CircularProgressIndicator());
-                }
-                if (snapshot.hasError) {
-                  return Center(child: Text('Error: ${snapshot.error}'));
-                }
-                final docs = snapshot.data?.docs ?? [];
-                return ListView.builder(
-                  itemCount: docs.length,
-                  itemBuilder: (context, index) {
-                    return _buildMealPlanCard(docs[index]);
-                  },
-                );
-              },
+      body: _isLoading
+          ? const Center(child: CircularProgressIndicator())
+          : Column(
+              children: [
+                _buildDaySelector(),
+                Expanded(
+                  child: SingleChildScrollView(
+                    child: _buildMealPlanCard(),
+                  ),
+                ),
+              ],
             ),
-          ),
-        ],
-      ),
       bottomNavigationBar: const BottomNavBar(),
     );
   }

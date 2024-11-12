@@ -211,15 +211,17 @@ class _MainPageState extends State<MainPage> {
                         return;
                       }
 
-                      final pickedDateTime = await showDatePicker(
+                      final pickedEndDateTime = await showDateTimePicker(
                         context: context,
-                        initialDate: _eventDateTime!,
-                        firstDate: DateTime.now(),
+                        initialDateTime:
+                            _eventDateTime!.add(const Duration(hours: 1)),
+                        firstDate:
+                            _eventDateTime!.add(const Duration(hours: 1)),
                         lastDate: DateTime.now().add(const Duration(days: 365)),
                       );
-                      if (pickedDateTime != null) {
+                      if (pickedEndDateTime != null) {
                         setState(() {
-                          _eventDateTime = pickedDateTime;
+                          _eventEndDateTime = pickedEndDateTime;
                         });
                       }
                     },
@@ -415,6 +417,39 @@ class _MainPageState extends State<MainPage> {
         ],
       ),
     );
+  }
+
+  Future<DateTime?> showDateTimePicker({
+    required BuildContext context,
+    required DateTime initialDateTime,
+    required DateTime firstDate,
+    required DateTime lastDate,
+  }) {
+    return showDatePicker(
+      context: context,
+      initialDate: initialDateTime,
+      firstDate: firstDate,
+      lastDate: lastDate,
+    ).then((date) {
+      if (date != null) {
+        return showTimePicker(
+          context: context,
+          initialTime: TimeOfDay.fromDateTime(initialDateTime),
+        ).then((time) {
+          if (time != null) {
+            return DateTime(
+              date.year,
+              date.month,
+              date.day,
+              time.hour,
+              time.minute,
+            );
+          }
+          return null;
+        });
+      }
+      return null;
+    });
   }
 
   Widget _buildCalendarGrid() {
