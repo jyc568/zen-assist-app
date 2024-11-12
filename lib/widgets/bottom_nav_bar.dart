@@ -3,6 +3,10 @@ import 'package:flutter/material.dart';
 import 'package:zen_assist/screens/mainpage.dart';
 import 'package:zen_assist/screens/todo_list_screen.dart';
 import 'package:zen_assist/screens/weeklymealplanpage.dart';
+import 'package:zen_assist/screens/inbox_screen.dart';
+
+
+//BOT NAV BAR working but not responsive, need to fix
 
 class BottomNavBar extends StatefulWidget {
   const BottomNavBar({super.key});
@@ -16,7 +20,6 @@ class _BottomNavBarState extends State<BottomNavBar> {
 
   @override
   Widget build(BuildContext context) {
-
     return BottomNavigationBar(
       currentIndex: _currentIndex,
       onTap: (index) {
@@ -39,10 +42,19 @@ class _BottomNavBarState extends State<BottomNavBar> {
               MaterialPageRoute(builder: (context) => const ToDoListScreen()),
             );
             break;
+
           case 2:
-             Navigator.push(
+            // Navigate to INBOX using MaterialPageRoute
+            Navigator.push(
               context,
-              MaterialPageRoute(builder: (context) => const WeeklyMealPlanPage()),
+              MaterialPageRoute(builder: (context) => const InboxScreen()),
+            );
+            break;
+          case 3:
+            Navigator.push(
+              context,
+              MaterialPageRoute(
+                  builder: (context) => const WeeklyMealPlanPage()),
             );
           // Add more cases for additional navigation items
         }
@@ -56,6 +68,10 @@ class _BottomNavBarState extends State<BottomNavBar> {
           icon: Icon(Icons.list),
           label: 'List',
         ),
+         BottomNavigationBarItem(
+          icon: Icon(Icons.mail),
+          label: 'Inbox',
+        ),
         BottomNavigationBarItem(
           icon: Icon(Icons.food_bank),
           label: 'Meal Planner',
@@ -64,8 +80,8 @@ class _BottomNavBarState extends State<BottomNavBar> {
       ],
       // Debugging visual cue
       backgroundColor: Colors.blue,
-      selectedItemColor: Colors.white,
-      unselectedItemColor: Colors.white70,
+      selectedItemColor: Colors.purple,
+      unselectedItemColor: Colors.black12,
     );
   }
 }

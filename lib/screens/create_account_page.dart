@@ -20,55 +20,11 @@ class _CreateAccountPageState extends State<CreateAccountPage> {
   final FirebaseAuth _auth = FirebaseAuth.instance;
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
 
-  String? _familyId; // Store the familyId if user chooses to join a family.
-  bool _isCreatingFamily = false; // Flag to track if the user is creating a family.
+  String? _familyId;
+  String _accountType = 'user'; // Default to 'Regular User'
+  bool _isCreatingFamily = false;
 
-  // Show dialog for choosing family creation or joining an existing one
-  void _showFamilyOptionsDialog() {
-    showDialog(
-      context: context,
-      builder: (BuildContext context) {
-        return AlertDialog(
-          title: const Text('Family Setup'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              ListTile(
-                title: const Text('Create a new family'),
-                leading: Radio<bool>(
-                  value: true,
-                  groupValue: _isCreatingFamily,
-                  onChanged: (value) {
-                    setState(() {
-                      _isCreatingFamily = value!;
-                      _familyId = null; // Reset familyId if creating new family.
-                    });
-                    Navigator.pop(context);
-                  },
-                ),
-              ),
-              ListTile(
-                title: const Text('Join an existing family'),
-                leading: Radio<bool>(
-                  value: false,
-                  groupValue: _isCreatingFamily,
-                  onChanged: (value) {
-                    setState(() {
-                      _isCreatingFamily = value!;
-                    });
-                    Navigator.pop(context);
-                    _showFamilyIdDialog();
-                  },
-                ),
-              ),
-            ],
-          ),
-        );
-      },
-    );
-  }
-
-  // Show dialog for entering familyId when joining an existing family
+  // Method to handle family ID input dialog
   void _showFamilyIdDialog() {
     String familyIdInput = '';
 
@@ -92,14 +48,17 @@ class _CreateAccountPageState extends State<CreateAccountPage> {
             ),
             TextButton(
               onPressed: () async {
-                // Check if the family exists
-                var familyDoc = await _firestore.collection('families').doc(familyIdInput).get();
+                var familyDoc = await _firestore
+                    .collection('families')
+                    .doc(familyIdInput)
+                    .get();
                 if (familyDoc.exists) {
                   setState(() {
                     _familyId = familyIdInput;
                   });
                   ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('Joined the family successfully!')),
+                    const SnackBar(
+                        content: Text('Joined the family successfully!')),
                   );
                 } else {
                   ScaffoldMessenger.of(context).showSnackBar(
@@ -116,18 +75,16 @@ class _CreateAccountPageState extends State<CreateAccountPage> {
     );
   }
 
-  // Handle account creation logic
+  // Method to handle account creation logic
   Future<void> _createAccount() async {
     if (_formKey.currentState!.validate()) {
       try {
-        // Step 1: Create a new user with Firebase Authentication
         UserCredential userCredential =
             await _auth.createUserWithEmailAndPassword(
           email: _emailController.text,
           password: _passwordController.text,
         );
 
-        // Step 2: Add user information to Firestore
         User? user = userCredential.user;
         if (user != null) {
           Map<String, dynamic> userData = {
@@ -141,20 +98,20 @@ class _CreateAccountPageState extends State<CreateAccountPage> {
           };
 
           // Handle family creation or joining
-          if (_isCreatingFamily) {
+          if (_accountType == 'createFamily') {
             // Create new family
             final familyRef = _firestore.collection('families').doc();
             await familyRef.set({
               'uid': user.uid,
-              'familyName': '${_nameController.text} Family', // Dynamic family name
+              'familyName': '${_nameController.text} Family',
               'members': [user.uid],
               'createdAt': FieldValue.serverTimestamp(),
             });
 
             userData['familyId'] = familyRef.id;
             userData['role'] = 'creator';
-          } else if (_familyId != null) {
-            // Join an existing family
+          } else if (_accountType == 'joinFamily' && _familyId != null) {
+            // Join existing family
             await _firestore.collection('families').doc(_familyId).update({
               'members': FieldValue.arrayUnion([user.uid]),
             });
@@ -163,19 +120,15 @@ class _CreateAccountPageState extends State<CreateAccountPage> {
             userData['role'] = 'member';
           }
 
-          // Store the user data in Firestore
+          // Store user data in Firestore
           await _firestore.collection('users').doc(user.uid).set(userData);
 
-          // Optionally, send a verification email
           await user.sendEmailVerification();
-
-          // Show success message
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(content: Text('Account created successfully!')),
           );
 
-          // Navigate to home or login page
-          Navigator.pop(context); // Or navigate to next screen.
+          Navigator.pop(context);
         }
       } on FirebaseAuthException catch (e) {
         String errorMessage = 'Something went wrong!';
@@ -278,16 +231,35 @@ class _CreateAccountPageState extends State<CreateAccountPage> {
                 },
               ),
               const SizedBox(height: 20),
-              ElevatedButton(
-                onPressed: _showFamilyOptionsDialog,
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: Theme.of(context).primaryColor,
-                  minimumSize: const Size(double.infinity, 50),
+              DropdownButtonFormField<String>(
+                value: _accountType,
+                decoration: const InputDecoration(
+                  labelText: 'Account Type',
+                  border: OutlineInputBorder(),
                 ),
-                child: const Text(
-                  'Choose Family Option',
-                  style: TextStyle(fontSize: 18),
-                ),
+                items: const [
+                  DropdownMenuItem(
+                    value: 'user',
+                    child: Text('Regular User'),
+                  ),
+                  DropdownMenuItem(
+                    value: 'createFamily',
+                    child: Text('Create a New Family'),
+                  ),
+                  DropdownMenuItem(
+                    value: 'joinFamily',
+                    child: Text('Join an Existing Family'),
+                  ),
+                ],
+                onChanged: (value) {
+                  setState(() {
+                    _accountType = value!;
+                    _familyId = null;
+                    if (value == 'joinFamily') {
+                      _showFamilyIdDialog();
+                    }
+                  });
+                },
               ),
               const SizedBox(height: 30),
               ElevatedButton(

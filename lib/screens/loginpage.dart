@@ -33,10 +33,11 @@ class _LoginPageState extends State<LoginPage> {
 
       // If successful, navigate to the main page
       if (userCredential.user != null) {
-        Navigator.pushReplacement(
-          context,
-          MaterialPageRoute(builder: (context) => const MainPage()),
-        );
+      // Clear previous instances of MainPage to prevent duplicates
+      Navigator.of(context).pushAndRemoveUntil(
+        MaterialPageRoute(builder: (context) => const MainPage()),
+        (route) => false,  // This clears the stack entirely and adds MainPage
+      );
       }
     } catch (e) {
       // Handle errors (e.g., invalid credentials)

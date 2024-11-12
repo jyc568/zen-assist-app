@@ -2,8 +2,13 @@ import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:zen_assist/screens/homepage.dart';
+import 'package:zen_assist/screens/mainpage.dart';
 import 'package:zen_assist/screens/todo_list_screen.dart';
 import 'package:zen_assist/utils/task_priority_colors.dart';
+import 'package:zen_assist/screens/inbox_screen.dart';
+
+
+//When users cick on tassk in the sidebar, it will take them to a page showing the taskID,it should show task details instead
 
 class Sidebar extends StatefulWidget {
   const Sidebar({super.key});
@@ -42,11 +47,12 @@ class _SidebarState extends State<Sidebar> {
       }
     }
   }
+
   Color _getTaskColor(String priority) {
     return TaskPriorityColors.getColor(priority);
   }
 
-   Future<void> _loadTasks() async {
+  Future<void> _loadTasks() async {
     final User? user = _auth.currentUser;
     if (user != null) {
       // Load personal tasks for the current user
@@ -105,7 +111,7 @@ class _SidebarState extends State<Sidebar> {
     }
   }
 
- void _filterTasks() {
+  void _filterTasks() {
     setState(() {
       // Filter personal tasks based on searchQuery
       filteredUserTasks = userTasks.where((task) {
@@ -165,6 +171,15 @@ class _SidebarState extends State<Sidebar> {
           ],
         );
       },
+    );
+  }
+
+  // Method to handle user logout
+  Future<void> _logout() async {
+    await _auth.signOut(); // Firebase Auth sign out
+    Navigator.of(context).pushReplacement(
+      MaterialPageRoute(
+          builder: (context) => const Homepage()), // Redirect to homepage
     );
   }
 
@@ -240,8 +255,7 @@ class _SidebarState extends State<Sidebar> {
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceAround,
                     children: [
-                      _buildQuickAction(Icons.search, 'Search'),
-                      _buildQuickAction(Icons.download, 'Download'),
+                      _buildQuickAction(Icons.move_to_inbox, 'Inbox'),
                       _buildQuickAction(Icons.calendar_today, 'Calendar'),
                     ],
                   ),
@@ -278,6 +292,18 @@ class _SidebarState extends State<Sidebar> {
 
                   // Feedback Button
                   _buildFeedbackButton(),
+
+                  // Logout Button (added at the bottom)
+                  const SizedBox(height: 16),
+                  ListTile(
+                    leading: const Icon(Icons.exit_to_app,
+                        color: Colors.purpleAccent),
+                    title: const Text('Log Out',
+                        style: TextStyle(color: Colors.purpleAccent)),
+                    tileColor:
+                        const Color(0xFF6B9080), // Using your custom color
+                    onTap: _logout, // Handle the logout logic
+                  ),
                 ],
               ),
             ),
@@ -288,15 +314,33 @@ class _SidebarState extends State<Sidebar> {
   }
 
   Widget _buildQuickAction(IconData icon, String label) {
-    return Column(
-      children: [
-        Icon(icon, color: Colors.grey[600]),
-        const SizedBox(height: 4),
-        Text(
-          label,
-          style: TextStyle(color: Colors.grey[600], fontSize: 12),
-        ),
-      ],
+    return GestureDetector(
+      onTap: () {
+        if (label == 'Inbox') {
+          Navigator.push(
+            context,
+            MaterialPageRoute(
+                builder: (context) =>
+                    const InboxScreen()), // Navigate to InboxScreen
+          );
+        } else if (label == 'Calendar') {
+          Navigator.push(
+            context,
+            MaterialPageRoute(builder: (context) => const MainPage()),
+          ); // Navigate to InboxScreen
+          // Add navigation logic for Calendar if needed
+        }
+      },
+      child: Column(
+        children: [
+          Icon(icon, color: Colors.grey[600]),
+          const SizedBox(height: 4),
+          Text(
+            label,
+            style: TextStyle(color: Colors.grey[600], fontSize: 12),
+          ),
+        ],
+      ),
     );
   }
 

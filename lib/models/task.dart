@@ -9,6 +9,8 @@ class Task {
   final String? familyId;  // To associate with family tasks
   final String taskType;  // To distinguish between 'individual' and 'family'
   final String priority;
+  final String? assignedTo; // Store the UID of the user assigned to the task
+  final String? description;
 
   Task({
     this.id,
@@ -19,6 +21,8 @@ class Task {
     this.familyId,
     required this.taskType,  
     this.priority = 'low',
+    this.assignedTo,  // Accept assignedTo as a parameter
+    this.description,
   });
 
   // Convert Firestore Document to Task object
@@ -32,6 +36,9 @@ class Task {
       userId: data['userId'] ?? '',
       familyId: data['familyId'],  // Add familyId here if available
       taskType: data['taskType'] ?? 'individual',  // Add taskType field
+      assignedTo: data['assignedTo'], // Add assignedTo field (UID of the user)
+      priority: data['priority'] ?? 'low',//STRANGE
+      description: data['description'],
     );
   }
 
@@ -45,6 +52,8 @@ class Task {
       'familyId': familyId,
       'taskType': taskType,  // Save taskType field
       'priority': priority,
+      'assignedTo': assignedTo, // Save assignedTo field
+      'description': description,
     };
   }
 }

@@ -6,6 +6,8 @@ import 'package:zen_assist/widgets/bottom_nav_bar.dart';
 import 'package:table_calendar/table_calendar.dart';
 import 'package:collection/collection.dart';
 
+//WeeklyMealPlanPage could use some work, GEMINI API hasnt been added yet
+
 class WeeklyMealPlanPage extends StatefulWidget {
   const WeeklyMealPlanPage({super.key});
 
