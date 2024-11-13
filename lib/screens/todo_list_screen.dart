@@ -16,7 +16,8 @@ class ToDoListScreen extends StatefulWidget {
   _ToDoListScreenState createState() => _ToDoListScreenState();
 }
 
-class _ToDoListScreenState extends State<ToDoListScreen> {
+class _ToDoListScreenState extends State<ToDoListScreen>
+    with WidgetsBindingObserver {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   final FirebaseAuth _auth = FirebaseAuth.instance;
   late Stream<QuerySnapshot> _personalTasksStream;
@@ -26,11 +27,62 @@ class _ToDoListScreenState extends State<ToDoListScreen> {
   bool _isLoading = true;
   final String _selectedPriority = 'low';
   List<Map<String, dynamic>> familyMembers = [];
+  final CollectionReference<Map<String, dynamic>> tasksCollection =
+      FirebaseFirestore.instance.collection('todoList');
+  DocumentReference? _currentSessionRef;
 
   @override
   void initState() {
     super.initState();
     _loadUserFamilyData();
+    WidgetsBinding.instance.addObserver(this);
+    _startSession();
+    logFeatureUsage('todo');
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.paused) {
+      _endSession(); // End session when app is backgrounded
+    } else if (state == AppLifecycleState.resumed) {
+      _startSession(); // Start new session when app resumes
+    }
+  }
+
+  // Function to log feature usage in Firestore
+  void logFeatureUsage(String featureName) {
+    FirebaseFirestore.instance
+        .collection('stats')
+        .doc('featureUtilization')
+        .update({
+      featureName: FieldValue.increment(1),
+    }).catchError((error) {
+      print("Failed to log feature usage: $error");
+    });
+  }
+
+  // Start a new session in Firestore
+  void _startSession() async {
+    _currentSessionRef =
+        await FirebaseFirestore.instance.collection('sessions').add({
+      'startTime': FieldValue.serverTimestamp(),
+      'endTime': null,
+    });
+  }
+
+  // End the current session in Firestore
+  void _endSession() async {
+    if (_currentSessionRef != null) {
+      await _currentSessionRef
+          ?.update({'endTime': FieldValue.serverTimestamp()});
+      _currentSessionRef = null;
+    }
   }
 
   Future<void> _loadUserFamilyData() async {

@@ -6,6 +6,7 @@ import 'package:zen_assist/widgets/bottom_nav_bar.dart';
 import 'package:zen_assist/widgets/sidebar.dart';
 import 'package:zen_assist/utils/task_priority_colors.dart';
 
+
 class CalendarEvent {
   final String id;
   final String title;

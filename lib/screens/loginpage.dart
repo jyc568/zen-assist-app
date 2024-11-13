@@ -1,5 +1,7 @@
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
+import 'package:zen_assist/screens/adminhomepage.dart';
 import 'create_account_page.dart';
 import 'mainpage.dart';
 
@@ -31,13 +33,37 @@ class _LoginPageState extends State<LoginPage> {
         password: _passwordController.text.trim(),
       );
 
-      // If successful, navigate to the main page
+      // If successful, navigate based on user role in Firestore
       if (userCredential.user != null) {
-      // Clear previous instances of MainPage to prevent duplicates
-      Navigator.of(context).pushAndRemoveUntil(
-        MaterialPageRoute(builder: (context) => const MainPage()),
-        (route) => false,  // This clears the stack entirely and adds MainPage
-      );
+        // Fetch user document from Firestore
+        DocumentSnapshot userDoc = await FirebaseFirestore.instance
+            .collection('users')
+            .doc(userCredential.user!.uid)
+            .get();
+
+        // Check if document exists
+        if (userDoc.exists) {
+          String? role = userDoc['role']; // Access the role field
+
+          if (role == 'admin') {
+            // Navigate to the AdminPage for admin
+            Navigator.of(context).pushAndRemoveUntil(
+              MaterialPageRoute(builder: (context) => Adminhomepage()),
+              (route) => false, // Clear the stack and open AdminPage
+            );
+          } else {
+            // Navigate to the MainPage for regular users
+            Navigator.of(context).pushAndRemoveUntil(
+              MaterialPageRoute(builder: (context) => const MainPage()),
+              (route) => false, // Clear the stack and open MainPage
+            );
+          }
+        } else {
+          // If document does not exist, show error
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('User data not found in Firestore.')),
+          );
+        }
       }
     } catch (e) {
       // Handle errors (e.g., invalid credentials)

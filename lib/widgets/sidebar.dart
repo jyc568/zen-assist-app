@@ -1,11 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:zen_assist/screens/addfeedback.dart';
 import 'package:zen_assist/screens/homepage.dart';
 import 'package:zen_assist/screens/mainpage.dart';
 import 'package:zen_assist/utils/task_priority_colors.dart';
 import 'package:zen_assist/screens/inbox_screen.dart';
-
 
 //When users cick on tassk in the sidebar, it will take them to a page showing the taskID,it should show task details instead
 
@@ -395,12 +395,25 @@ class _SidebarState extends State<Sidebar> {
 
   Widget _buildFeedbackButton() {
     return InkWell(
-      onTap: _showFeedbackDialog,
+      onTap: () {
+        // Navigate to AddFeedbackPage when tapped
+        Navigator.push(
+          context, // Use the context directly here
+          MaterialPageRoute(
+            builder: (context) =>
+                AddFeedbackPage(), // Navigate to AddFeedbackPage
+          ),
+        );
+      },
       child: Row(
         children: [
-          Icon(Icons.help_outline, color: Colors.grey[600]),
+          Icon(Icons.feedback,
+              color: Colors.teal), // Changed to 'feedback' icon
           const SizedBox(width: 8),
-          const Text('Feedback'),
+          const Text(
+            'Add Feedback',
+            style: TextStyle(color: Colors.teal, fontWeight: FontWeight.bold),
+          ),
         ],
       ),
     );
