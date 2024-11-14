@@ -6,7 +6,6 @@ import 'package:zen_assist/widgets/bottom_nav_bar.dart';
 import 'package:zen_assist/widgets/sidebar.dart';
 import 'package:zen_assist/utils/task_priority_colors.dart';
 
-
 class CalendarEvent {
   final String id;
   final String title;
@@ -36,7 +35,8 @@ class CalendarEvent {
     return CalendarEvent(
       id: map['id'],
       title: map['title'],
-      dateTime: (map['dateTime'] as Timestamp).toDate(),
+      dateTime: DateTime.fromMillisecondsSinceEpoch(
+          (map['dateTime'] as Timestamp).millisecondsSinceEpoch),
       endDateTime: map['endDateTime'] != null
           ? (map['endDateTime'] as Timestamp).toDate()
           : null,
@@ -138,6 +138,12 @@ class _MainPageState extends State<MainPage> {
       return;
     }
 
+    // Check if the event date is in the past
+    if (_eventDateTime!.isBefore(DateTime.now())) {
+      _showErrorSnackBar('Event date cannot be in the past.');
+      return;
+    }
+
     try {
       final newEvent = CalendarEvent(
         id: DateTime.now().millisecondsSinceEpoch.toString(),
@@ -203,6 +209,7 @@ class _MainPageState extends State<MainPage> {
                       _eventTitle = value;
                     },
                   ),
+                  // Date picker for the event start date
                   TextButton(
                     onPressed: () async {
                       // Check if the selected date is in the past
@@ -212,30 +219,37 @@ class _MainPageState extends State<MainPage> {
                         return;
                       }
 
-                      final pickedEndDateTime = await showDateTimePicker(
+                      final pickedStartDateTime = await showDateTimePicker(
                         context: context,
                         initialDateTime:
                             _eventDateTime!.add(const Duration(hours: 1)),
                         firstDate:
-                            _eventDateTime!.add(const Duration(hours: 1)),
+                            DateTime.now(), // Prevent selection of past dates
                         lastDate: DateTime.now().add(const Duration(days: 365)),
                       );
-                      if (pickedEndDateTime != null) {
+                      if (pickedStartDateTime != null) {
                         setState(() {
-                          _eventEndDateTime = pickedEndDateTime;
+                          _eventDateTime = pickedStartDateTime;
                         });
                       }
                     },
                     child:
                         Text(DateFormat('MMM d, yyyy').format(_eventDateTime!)),
                   ),
+                  // Date picker for the event end date
                   TextButton(
                     onPressed: () async {
+                      if (_eventDateTime == null) {
+                        _showErrorSnackBar('Please select a start date first.');
+                        return;
+                      }
+
                       final pickedEndDateTime = await showDatePicker(
                         context: context,
                         initialDate:
-                            _eventDateTime!.add(const Duration(days: 1)),
-                        firstDate: _eventDateTime!.add(const Duration(days: 1)),
+                            _eventDateTime!.add(const Duration(hours: 1)),
+                        firstDate:
+                            _eventDateTime!, // Prevent selection of dates before start date
                         lastDate: DateTime.now().add(const Duration(days: 365)),
                       );
                       if (pickedEndDateTime != null) {
@@ -249,6 +263,7 @@ class _MainPageState extends State<MainPage> {
                             .format(_eventEndDateTime!))
                         : const Text('Select End Date (optional)'),
                   ),
+                  // Priority dropdown
                   DropdownButton<String>(
                     value: _eventPriority,
                     hint: const Text('Select Priority'),
@@ -264,6 +279,7 @@ class _MainPageState extends State<MainPage> {
                       );
                     }).toList(),
                   ),
+                  // Recurring checkbox
                   CheckboxListTile(
                     title: const Text('Recurring Event'),
                     value: _eventIsRecurring ?? false,
@@ -282,6 +298,7 @@ class _MainPageState extends State<MainPage> {
                         _eventRecurringPattern = value;
                       },
                     ),
+                  // Tags input
                   TextField(
                     decoration: const InputDecoration(
                       labelText: 'Tags (optional)',
@@ -470,13 +487,24 @@ class _MainPageState extends State<MainPage> {
             date.month == _selectedDate.month &&
             date.day == _selectedDate.day;
 
+        // Adjusted isPastDate logic to ignore time
+        final now = DateTime.now();
+        final today = DateTime(now.year, now.month, now.day);
+        final isPastDate = date.isBefore(today);
+
         return GestureDetector(
           onTap: () {
+            // Only allow tapping on future or current dates
+            if (isPastDate) {
+              return; // Do nothing if the date is in the past
+            }
+
             setState(() {
               _selectedDate = date;
             });
             if (events.isEmpty) {
-              _showAddEventDialog(date);
+              _showAddEventDialog(
+                  date); // Show event dialog if no events are present
             }
           },
           child: Container(
@@ -486,9 +514,13 @@ class _MainPageState extends State<MainPage> {
                 width: isSelected ? 2 : 1,
               ),
               borderRadius: BorderRadius.circular(4),
-              color: isToday
-                  ? Colors.blue.withOpacity(0.1)
-                  : (isSelectedMonth ? Colors.white : Colors.grey[100]),
+              // Updated background color logic
+              color: isPastDate
+                  ? Colors.grey
+                      .withOpacity(0.3) // Dimming the background for past dates
+                  : (isToday
+                      ? Colors.blue.withOpacity(0.1)
+                      : (isSelectedMonth ? Colors.white : Colors.grey[100])),
             ),
             child: Column(
               children: [
@@ -497,8 +529,15 @@ class _MainPageState extends State<MainPage> {
                   child: Text(
                     '${date.day}',
                     style: TextStyle(
-                      color: isSelectedMonth ? Colors.black : Colors.grey,
-                      fontWeight: isToday ? FontWeight.bold : FontWeight.normal,
+                      color: isSelectedMonth
+                          ? (isPastDate
+                              ? Colors.grey
+                              : Colors
+                                  .black) // Disable text color for past dates
+                          : Colors.grey,
+                      fontWeight: isToday
+                          ? FontWeight.bold
+                          : (isPastDate ? FontWeight.normal : FontWeight.bold),
                       fontSize: 12,
                     ),
                   ),
@@ -616,7 +655,25 @@ class _MainPageState extends State<MainPage> {
                           subtitle: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              Text(DateFormat('h:mm a').format(event.dateTime)),
+                              // Display start time - If it is not an all-day event
+                              Text(
+                                (event.dateTime.hour == 0 &&
+                                        event.dateTime.minute == 0)
+                                    ? DateFormat('MMM d, yyyy').format(event
+                                        .dateTime) // Display just the date for all-day events
+                                    : DateFormat('h:mm a').format(event
+                                        .dateTime), // Display time if it's a specific time
+                              ),
+
+                              // Display end time only if it exists (avoid showing "12:00 AM")
+                              if (event.endDateTime != null)
+                                Text(
+                                  DateFormat('h:mm a')
+                                      .format(event.endDateTime!),
+                                  style: TextStyle(color: Colors.grey[600]),
+                                ),
+
+                              // Display description only if it exists
                               if (event.description != null)
                                 Text(
                                   event.description!,

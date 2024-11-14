@@ -88,7 +88,7 @@ class _WeeklyMealPlanPageState extends State<WeeklyMealPlanPage> {
 
       // Query Firestore for the current week's meal plans
       final snapshot = await _firestore
-          .collection('mealplans')
+          .collection('mealPlans')
           .where('userId', isEqualTo: _auth.currentUser?.uid)
           .where('date', isGreaterThanOrEqualTo: Timestamp.fromDate(weekStart))
           .where('date', isLessThan: Timestamp.fromDate(weekEnd))
@@ -147,7 +147,7 @@ class _WeeklyMealPlanPageState extends State<WeeklyMealPlanPage> {
       if (_documentIds.containsKey(dateStr)) {
         // Update existing document
         await _firestore
-            .collection('mealplans')
+            .collection('mealPlans')
             .doc(_documentIds[dateStr])
             .update({
           mealType.toLowerCase(): meal,
@@ -155,7 +155,7 @@ class _WeeklyMealPlanPageState extends State<WeeklyMealPlanPage> {
         });
       } else {
         // Create new document with normalized date
-        final docRef = await _firestore.collection('mealplans').add({
+        final docRef = await _firestore.collection('mealPlans').add({
           'userId': _auth.currentUser?.uid,
           'date': Timestamp.fromDate(normalizedDate),
           mealType.toLowerCase(): meal,
@@ -211,7 +211,7 @@ class _WeeklyMealPlanPageState extends State<WeeklyMealPlanPage> {
       // Generate prompt for Gemini
       final prompt = '''
         Based on the user's past meal preferences: ${jsonEncode(userPreferences)},
-        suggest 5 different ${mealType.toLowerCase()} options that are:
+        suggest 3 different ${mealType.toLowerCase()} options that are:
         1. Healthy and balanced
         2. Similar to their preferences
         3. Easy to prepare
@@ -362,7 +362,7 @@ class _WeeklyMealPlanPageState extends State<WeeklyMealPlanPage> {
           children: [
             const Text('Suggestions:',
                 style: TextStyle(fontWeight: FontWeight.bold)),
-            const SizedBox(height: 8),
+            const SizedBox(height: 12),
             ...suggestions.map((meal) => ListTile(
                   title: Text(meal),
                   onTap: () {
@@ -470,7 +470,7 @@ class _WeeklyMealPlanPageState extends State<WeeklyMealPlanPage> {
                       mealType,
                       style: const TextStyle(
                         fontWeight: FontWeight.bold,
-                        fontSize: 16,
+                        fontSize: 10,
                       ),
                     ),
                     Row(

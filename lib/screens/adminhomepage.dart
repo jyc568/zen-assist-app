@@ -11,8 +11,6 @@ void main() {
 }
 
 class Adminhomepage extends StatelessWidget {
- 
-
   @override
   Widget build(BuildContext context) {
     return const MaterialApp(
@@ -22,9 +20,8 @@ class Adminhomepage extends StatelessWidget {
 }
 
 class DashboardScreen extends StatefulWidget {
-   const DashboardScreen({super.key});
+  const DashboardScreen({super.key});
   @override
-  
   _DashboardScreenState createState() => _DashboardScreenState();
 }
 
@@ -152,7 +149,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   Navigator.of(context).pop();
                   Navigator.pushReplacement(
                     context,
-                    MaterialPageRoute(builder: (context) => const ZenAssistApp()),
+                    MaterialPageRoute(
+                        builder: (context) => const ZenAssistApp()),
                   );
                 },
               ),
@@ -194,14 +192,14 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   Text(
                     'Welcome Back,',
                     style: TextStyle(
-                      fontSize: 20,
+                      fontSize: 16, // Reduced font size
                       color: Colors.white,
                     ),
                   ),
                   Text(
                     'Angelina Leanore',
                     style: TextStyle(
-                      fontSize: 24,
+                      fontSize: 18, // Reduced font size
                       color: Colors.white,
                       fontWeight: FontWeight.bold,
                     ),
@@ -249,31 +247,23 @@ class _DashboardScreenState extends State<DashboardScreen> {
       ),
       appBar: AppBar(
         backgroundColor: Colors.white,
-        title: const Text("Main Page"),
-        leading: Builder(
-          builder: (context) => IconButton(
-            icon: Image.asset(
-              'assets/images/web.png',
-              width: 40,
-              height: 40,
-            ),
-            onPressed: () {
-              Scaffold.of(context).openDrawer();
-            },
-          ),
-        ),
+        title: const Text("Admin Dashboard"),
       ),
       body: SafeArea(
         child: SingleChildScrollView(
+          // Ensures the entire screen is scrollable
           child: Center(
             child: Container(
-              width: 450,
+              width:
+                  double.infinity, // Makes sure the container takes full width
               padding: const EdgeInsets.all(20),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
+                  // Timeframe Dropdown and Stats Grid
                   Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
                     decoration: BoxDecoration(
                       color: Colors.green[100],
                       borderRadius: BorderRadius.circular(8),
@@ -306,13 +296,16 @@ class _DashboardScreenState extends State<DashboardScreen> {
                     ),
                   ),
                   const SizedBox(height: 16),
+
+                  // Stat Cards with Overflow Fixes
                   GridView.count(
                     crossAxisCount: 2,
-                    shrinkWrap: true,
+                    shrinkWrap: true, // Ensures GridView shrinks to fit content
                     crossAxisSpacing: 16,
                     mainAxisSpacing: 15,
                     physics: const NeverScrollableScrollPhysics(),
                     children: [
+                      // Average Time Spent Per Session
                       FutureBuilder<double>(
                         future: calculateAverageSessionTime(),
                         builder: (context, snapshot) {
@@ -320,18 +313,17 @@ class _DashboardScreenState extends State<DashboardScreen> {
                               ConnectionState.waiting) {
                             return _buildStatCard(
                               context,
-                              'Average Time Spent Per Session',
+                              'Avg Time/Session',
                               'Calculating...',
                               'Please wait...',
                               Colors.green[200]!,
                               Icons.timer,
                             );
                           }
-
                           if (snapshot.hasError) {
                             return _buildStatCard(
                               context,
-                              'Average Time Spent Per Session',
+                              'Avg Time/Session',
                               'Error',
                               'Unable to calculate',
                               Colors.green[200]!,
@@ -347,7 +339,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                                   .first; // Format duration as HH:MM:SS
                           return _buildStatCard(
                             context,
-                            'Average Time Spent Per Session',
+                            'Avg Time/Session',
                             formattedTime,
                             'Calculated for sessions',
                             Colors.green[200]!,
@@ -355,6 +347,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                           );
                         },
                       ),
+                      // Task Completion
                       StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
                         stream: FirebaseFirestore.instance
                             .collection('stats')
@@ -365,9 +358,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
                               ConnectionState.waiting) {
                             return _buildStatCard(
                               context,
-                              'Task Completion Statistic',
+                              'Task Completion',
                               'Loading...',
-                              '↑ Counting...',
+                              'Counting...',
                               Colors.blue[200]!,
                               Icons.check_circle,
                             );
@@ -376,7 +369,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                           if (snapshot.hasError) {
                             return _buildStatCard(
                               context,
-                              'Task Completion Statistic',
+                              'Task Completion',
                               'Error',
                               'Unable to load data',
                               Colors.blue[200]!,
@@ -389,14 +382,15 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
                           return _buildStatCard(
                             context,
-                            'Task Completion Statistic',
+                            'Task Completion',
                             '$completionCount',
-                            '↑ $completionCount Completed',
+                            'Completed tasks',
                             Colors.blue[200]!,
                             Icons.check_circle,
                           );
                         },
                       ),
+                      // Feature Utilization
                       StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
                         stream: FirebaseFirestore.instance
                             .collection('stats')
@@ -407,7 +401,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                               ConnectionState.waiting) {
                             return _buildStatCard(
                               context,
-                              'Total Feature Utilization',
+                              'Feature Utilization',
                               'Loading...',
                               'Calculating...',
                               Colors.red[200]!,
@@ -418,7 +412,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                           if (snapshot.hasError) {
                             return _buildStatCard(
                               context,
-                              'Total Feature Utilization',
+                              'Feature Utilization',
                               'Error',
                               'Unable to load data',
                               Colors.red[200]!,
@@ -426,7 +420,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
                             );
                           }
 
-                          // Calculate the total usage count
                           Map<String, dynamic> featureData =
                               snapshot.data?.data() ?? {};
                           int totalUtilization = featureData.values
@@ -434,14 +427,15 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
                           return _buildStatCard(
                             context,
-                            'Total Feature Utilization',
+                            'Feature Utilization',
                             '$totalUtilization',
-                            'Sum of all feature uses',
+                            'Total feature use',
                             Colors.red[200]!,
                             Icons.settings,
                           );
                         },
                       ),
+                      // Total Users
                       StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
                         stream: FirebaseFirestore.instance
                             .collection('users')
@@ -488,7 +482,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   Text(
                     'INTERACTION',
                     style: TextStyle(
-                      fontSize: 18,
+                      fontSize: 16, // Reduced font size
                       fontWeight: FontWeight.w500,
                       color: Colors.grey[700],
                     ),
@@ -496,14 +490,19 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   const Text(
                     'User Engagement',
                     style: TextStyle(
-                      fontSize: 22,
+                      fontSize: 18, // Reduced font size
                       fontWeight: FontWeight.bold,
                       color: Colors.black,
                     ),
                   ),
                   const SizedBox(height: 16),
+
+                  // Adjust the size of the bar chart container
                   Container(
-                    height: 200,
+                    width:
+                        double.infinity, // Ensures it takes up the full width
+                    height: MediaQuery.of(context).size.height *
+                        0.35, // Adjust height dynamically
                     decoration: BoxDecoration(
                       color: Colors.white,
                       border: Border.all(color: Colors.green, width: 2),
@@ -520,7 +519,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
                           if (snapshot.hasError) {
                             return Text(
                               'Error: ${snapshot.error}',
-                              style: const TextStyle(fontSize: 18, color: Colors.red),
+                              style: const TextStyle(
+                                  fontSize: 14, color: Colors.red),
                             );
                           }
 
@@ -533,10 +533,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
                                 BarChartRodData(
                                   toY: entry.value /
                                       60, // Convert seconds to minutes
-                                  width: 15,
+                                  width: 30,
                                   borderRadius: BorderRadius.circular(2),
-                                  color: Colors
-                                      .blue, // Customize bar color if needed
+                                  color: Colors.blue,
                                 ),
                               ],
                             );
@@ -550,12 +549,12 @@ class _DashboardScreenState extends State<DashboardScreen> {
                                               .reduce((a, b) => a > b ? a : b) /
                                           60) +
                                       5
-                                  : 10, // Set maxY dynamically
+                                  : 10,
                               titlesData: FlTitlesData(
                                 leftTitles: AxisTitles(
                                   sideTitles: SideTitles(
                                     showTitles: true,
-                                    reservedSize: 40,
+                                    reservedSize: 50,
                                     getTitlesWidget: (value, meta) {
                                       return Text('${value.toInt()} mins');
                                     },
@@ -595,9 +594,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
     String subtitle,
     Color color,
     IconData icon, {
-    double titleFontSize = 14,
-    double countFontSize = 24,
-    double subtitleFontSize = 12,
+    double titleFontSize = 10,
+    double countFontSize = 18,
+    double subtitleFontSize = 8,
   }) {
     return Container(
       padding: const EdgeInsets.all(16),
